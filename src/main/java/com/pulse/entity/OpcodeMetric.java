@@ -24,6 +24,7 @@ public class OpcodeMetric {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
+    @com.fasterxml.jackson.annotation.JsonIgnore
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "session_id", nullable = false)
     private RuleSession session;
@@ -37,6 +38,7 @@ public class OpcodeMetric {
     @Column(name = "antipattern_flag", nullable = false)
     private boolean antipatternFlag;
 
+    @com.fasterxml.jackson.databind.annotation.JsonSerialize(using = com.fasterxml.jackson.databind.ser.std.ToStringSerializer.class)
     @Column(name = "evaluated_at", nullable = false)
     private Instant evaluatedAt;
 

@@ -40,7 +40,10 @@ public class RuleSessionRepository {
      * @return list of all sessions
      */
     public List<RuleSession> findAll() {
-        return em.createQuery("SELECT s FROM RuleSession s ORDER BY s.createdAt DESC", RuleSession.class)
+        EntityGraph<RuleSession> entityGraph = em.createEntityGraph(RuleSession.class);
+        entityGraph.addAttributeNodes("metrics");
+        return em.createQuery("SELECT DISTINCT s FROM RuleSession s ORDER BY s.createdAt DESC", RuleSession.class)
+                .setHint("jakarta.persistence.fetchgraph", entityGraph)
                 .getResultList();
     }
 
@@ -64,8 +67,11 @@ public class RuleSessionRepository {
      * @return list of matching sessions
      */
     public List<RuleSession> findByEngineerId(String engineerId) {
-        return em.createQuery("SELECT s FROM RuleSession s WHERE s.engineerId = :engineerId ORDER BY s.createdAt DESC", RuleSession.class)
+        EntityGraph<RuleSession> entityGraph = em.createEntityGraph(RuleSession.class);
+        entityGraph.addAttributeNodes("metrics");
+        return em.createQuery("SELECT DISTINCT s FROM RuleSession s WHERE s.engineerId = :engineerId ORDER BY s.createdAt DESC", RuleSession.class)
                 .setParameter("engineerId", engineerId)
+                .setHint("jakarta.persistence.fetchgraph", entityGraph)
                 .getResultList();
     }
 
@@ -83,7 +89,6 @@ public class RuleSessionRepository {
         Join<RuleSession, OpcodeMetric> metric = session.join("metrics");
 
         cq.select(session)
-                .distinct(true)
                 .where(cb.gt(metric.get("totalOpcodeCount"), threshold))
                 .orderBy(cb.desc(metric.get("totalOpcodeCount")));
 
