@@ -61,6 +61,8 @@ class RuleSessionRepositoryTest {
     @BeforeEach
     void setUp() {
         repository = new RuleSessionRepository(em);
+        lenient().when(em.createEntityGraph(RuleSession.class)).thenReturn(entityGraph);
+        lenient().when(typedQuery.setHint(anyString(), any())).thenReturn(typedQuery);
     }
 
     @Test
@@ -72,7 +74,7 @@ class RuleSessionRepositoryTest {
         List<RuleSession> result = repository.findAll();
         assertThat(result).isEmpty();
 
-        verify(em).createQuery("SELECT s FROM RuleSession s ORDER BY s.createdAt DESC", RuleSession.class);
+        verify(em).createQuery("SELECT DISTINCT s FROM RuleSession s ORDER BY s.createdAt DESC", RuleSession.class);
     }
 
     @Test
@@ -156,7 +158,6 @@ class RuleSessionRepositoryTest {
         when(criteriaQuery.from(RuleSession.class)).thenReturn(root);
         when(root.<RuleSession, OpcodeMetric>join("metrics")).thenReturn(joinMetric);
         when(criteriaQuery.select(root)).thenReturn(criteriaQuery);
-        when(criteriaQuery.distinct(true)).thenReturn(criteriaQuery);
 
         Path<Object> countPath = mock(Path.class);
         when(joinMetric.get("totalOpcodeCount")).thenReturn(countPath);

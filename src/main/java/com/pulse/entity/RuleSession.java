@@ -52,6 +52,7 @@ public class RuleSession {
     @Version
     private Long version;
 
+    @com.fasterxml.jackson.databind.annotation.JsonSerialize(using = com.fasterxml.jackson.databind.ser.std.ToStringSerializer.class)
     @Column(name = "created_at", nullable = false)
     private Instant createdAt;
 
