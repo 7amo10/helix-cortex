@@ -92,6 +92,13 @@
             <version>${mockito.version}</version>
             <scope>test</scope>
         </dependency>
+        <!-- RESTEasy RuntimeDelegate for standalone JAX-RS unit testing -->
+        <dependency>
+            <groupId>org.jboss.resteasy</groupId>
+            <artifactId>resteasy-core</artifactId>
+            <version>6.2.7.Final</version>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 
     <build>
