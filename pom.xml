@@ -59,6 +59,14 @@
             <scope>provided</scope>
         </dependency>
 
+        <!-- Hibernate ORM (Provided by WildFly 31) -->
+        <dependency>
+            <groupId>org.hibernate.orm</groupId>
+            <artifactId>hibernate-core</artifactId>
+            <version>6.4.2.Final</version>
+            <scope>provided</scope>
+        </dependency>
+
         <!-- Helix Core & API Execution Core -->
         <dependency>
             <groupId>com.helix</groupId>
