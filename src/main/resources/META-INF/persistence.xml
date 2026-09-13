@@ -11,6 +11,11 @@
         <!-- L2 Cache Mode: Cache only entities annotated with @Cacheable(true) -->
         <shared-cache-mode>ENABLE_SELECTIVE</shared-cache-mode>
 
+        <class>com.pulse.entity.EngineerAccount</class>
+        <class>com.pulse.entity.AuditLog</class>
+        <class>com.pulse.entity.RuleSession</class>
+        <class>com.pulse.entity.OpcodeMetric</class>
+
         <properties>
             <!-- Dialect -->
             <property name="hibernate.dialect" value="org.hibernate.dialect.PostgreSQLDialect"/>
