@@ -17,6 +17,7 @@
 
             <!-- Schema Management for Development -->
             <property name="hibernate.hbm2ddl.auto" value="create-drop"/>
+            <property name="jakarta.persistence.sql-load-script-source" value="META-INF/initial-data.sql"/>
 
             <!-- Formatting and SQL Logging -->
             <property name="hibernate.show_sql" value="false"/>
