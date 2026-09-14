@@ -14,12 +14,17 @@ import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
 import jakarta.ws.rs.sse.Sse;
 import jakarta.ws.rs.sse.SseEventSink;
+import org.eclipse.microprofile.openapi.annotations.Operation;
+import org.eclipse.microprofile.openapi.annotations.responses.APIResponse;
+import org.eclipse.microprofile.openapi.annotations.responses.APIResponses;
+import org.eclipse.microprofile.openapi.annotations.tags.Tag;
 
 /**
  * JAX-RS resource exposing live JVM telemetry via Server-Sent Events (SSE)
  * and point-in-time snapshot inspection for administration.
  */
 @Path("/telemetry")
+@Tag(name = "telemetry", description = "HotSpot JVM runtime telemetry snapshots and SSE streaming")
 @Secured
 @RequestScoped
 public class TelemetryResource {
@@ -45,6 +50,11 @@ public class TelemetryResource {
     @Path("/stream")
     @Produces(MediaType.SERVER_SENT_EVENTS)
     @RolesAllowed("ADMIN")
+    @Operation(summary = "Stream live JVM telemetry via SSE (ADMIN)", description = "Establishes a Server-Sent Events stream broadcasting live HotSpot memory, GC, and thread metrics every 1 second")
+    @APIResponses({
+            @APIResponse(responseCode = "200", description = "SSE stream established successfully"),
+            @APIResponse(responseCode = "403", description = "Forbidden - requires ADMIN role")
+    })
     public void stream(@Context SseEventSink sink, @Context Sse sse) {
         if (sink != null && telemetryControl != null) {
             telemetryControl.registerSink(sink);
@@ -60,6 +70,11 @@ public class TelemetryResource {
     @Path("/snapshot")
     @Produces(MediaType.APPLICATION_JSON)
     @RolesAllowed("ADMIN")
+    @Operation(summary = "Get JVM telemetry snapshot (ADMIN)", description = "Returns an instantaneous snapshot of JVM heap, non-heap, GC collections, and thread counts")
+    @APIResponses({
+            @APIResponse(responseCode = "200", description = "Current JVM telemetry snapshot"),
+            @APIResponse(responseCode = "403", description = "Forbidden - requires ADMIN role")
+    })
     public Response getSnapshot() {
         if (telemetryControl == null) {
             return Response.serverError().build();

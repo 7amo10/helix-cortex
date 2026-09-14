@@ -32,6 +32,7 @@
 
             <!-- Profiling and Statistics for Optimization / Sprint 4 -->
             <property name="hibernate.generate_statistics" value="true"/>
+            <property name="hibernate.statistics.statistics_enabled" value="true"/>
 
             <!-- HikariCP Connection Pool Settings -->
             <property name="hibernate.hikari.maximumPoolSize" value="16"/>
