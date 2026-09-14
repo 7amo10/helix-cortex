@@ -81,6 +81,13 @@
             <scope>compile</scope>
         </dependency>
 
+        <!-- ASM Bytecode Manipulation for JAR Analysis -->
+        <dependency>
+            <groupId>org.ow2.asm</groupId>
+            <artifactId>asm</artifactId>
+            <version>9.6</version>
+        </dependency>
+
         <!-- Testing Dependencies -->
         <dependency>
             <groupId>org.junit.jupiter</groupId>
