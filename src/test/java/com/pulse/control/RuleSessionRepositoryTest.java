@@ -74,7 +74,7 @@ class RuleSessionRepositoryTest {
         List<RuleSession> result = repository.findAll();
         assertThat(result).isEmpty();
 
-        verify(em).createQuery("SELECT DISTINCT s FROM RuleSession s ORDER BY s.createdAt DESC", RuleSession.class);
+        verify(em).createQuery("SELECT DISTINCT s FROM RuleSession s LEFT JOIN FETCH s.metrics ORDER BY s.createdAt DESC", RuleSession.class);
     }
 
     @Test
