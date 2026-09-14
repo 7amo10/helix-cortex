@@ -18,6 +18,10 @@ import jakarta.ws.rs.Path;
 import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
+import org.eclipse.microprofile.openapi.annotations.Operation;
+import org.eclipse.microprofile.openapi.annotations.responses.APIResponse;
+import org.eclipse.microprofile.openapi.annotations.responses.APIResponses;
+import org.eclipse.microprofile.openapi.annotations.tags.Tag;
 
 import java.util.Collections;
 import java.util.Map;
@@ -27,6 +31,7 @@ import java.util.Optional;
  * Public authentication boundary exposing login and registration endpoints.
  */
 @Path("/auth")
+@Tag(name = "auth", description = "Authentication and engineer account management")
 @ApplicationScoped
 @Consumes(MediaType.APPLICATION_JSON)
 @Produces(MediaType.APPLICATION_JSON)
@@ -54,6 +59,12 @@ public class AuthResource {
 
     @POST
     @Path("/login")
+    @Operation(summary = "Authenticate engineer and receive JWT bearer token", description = "Validates username and password against PBKDF2 hash and returns signed HMAC-SHA256 JWT")
+    @APIResponses({
+            @APIResponse(responseCode = "200", description = "Successful authentication, returns JWT token and engineer details"),
+            @APIResponse(responseCode = "400", description = "Missing or malformed login credentials"),
+            @APIResponse(responseCode = "401", description = "Invalid credentials or unauthorized access")
+    })
     public Response login(LoginRequest req) {
         if (req == null || req.username() == null || req.password() == null) {
             return Response.status(Response.Status.BAD_REQUEST)
@@ -97,6 +108,12 @@ public class AuthResource {
     @POST
     @Path("/register")
     @Transactional
+    @Operation(summary = "Register a new engineer account", description = "Creates a new engineer account with hashed password and assigns designated role")
+    @APIResponses({
+            @APIResponse(responseCode = "201", description = "Account created successfully"),
+            @APIResponse(responseCode = "400", description = "Validation failed on registration request"),
+            @APIResponse(responseCode = "409", description = "Username or email already exists")
+    })
     public Response register(RegisterRequest req) {
         if (req == null || req.username() == null || req.username().isBlank() ||
                 req.password() == null || req.password().isBlank()) {

@@ -10,6 +10,10 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.Part;
 import jakarta.ws.rs.*;
 import jakarta.ws.rs.core.*;
+import org.eclipse.microprofile.openapi.annotations.Operation;
+import org.eclipse.microprofile.openapi.annotations.responses.APIResponse;
+import org.eclipse.microprofile.openapi.annotations.responses.APIResponses;
+import org.eclipse.microprofile.openapi.annotations.tags.Tag;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -22,6 +26,7 @@ import java.util.Optional;
  * and querying analysis job sessions.
  */
 @Path("/jars")
+@Tag(name = "jars", description = "Asynchronous JAR archive bytecode disassembly and antipattern analysis")
 @Secured
 @Produces(MediaType.APPLICATION_JSON)
 @RequestScoped
@@ -53,6 +58,11 @@ public class JarAnalysisResource {
     @Path("/analyze")
     @Consumes(MediaType.MULTIPART_FORM_DATA)
     @RolesAllowed({"ENGINEER", "ADMIN"})
+    @Operation(summary = "Upload and asynchronously analyze JAR bytecode", description = "Submits a JAR archive for asynchronous opcode counting and antipattern detection, returning 202 with Location header")
+    @APIResponses({
+            @APIResponse(responseCode = "202", description = "JAR accepted for asynchronous analysis"),
+            @APIResponse(responseCode = "400", description = "Missing file part or invalid archive format")
+    })
     public Response analyzeMultipart(List<EntityPart> parts, @Context SecurityContext context) {
         SecurityContext effectiveSc = (context != null) ? context : this.sc;
         InputStream jarStream = null;
@@ -134,6 +144,12 @@ public class JarAnalysisResource {
     @GET
     @Path("/sessions/{id}")
     @RolesAllowed({"ENGINEER", "ADMIN"})
+    @Operation(summary = "Get JAR analysis details by ID", description = "Retrieves class-level opcode metrics and detected antipatterns for an analysis job")
+    @APIResponses({
+            @APIResponse(responseCode = "200", description = "Analysis details and class metrics"),
+            @APIResponse(responseCode = "400", description = "Missing or invalid session ID"),
+            @APIResponse(responseCode = "404", description = "Analysis job not found")
+    })
     public Response getSessionById(@PathParam("id") Long id) {
         if (id == null) {
             return Response.status(Response.Status.BAD_REQUEST)
@@ -159,6 +175,11 @@ public class JarAnalysisResource {
     @GET
     @Path("/sessions")
     @RolesAllowed("ADMIN")
+    @Operation(summary = "List all JAR analysis jobs (ADMIN)", description = "Retrieves all submitted JAR analysis jobs with completion statuses")
+    @APIResponses({
+            @APIResponse(responseCode = "200", description = "List of JAR analysis jobs"),
+            @APIResponse(responseCode = "403", description = "Forbidden - requires ADMIN role")
+    })
     public Response getAllSessions() {
         List<JarAnalysis> sessions = control.findAll();
         return Response.ok(sessions).build();
