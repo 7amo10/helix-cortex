@@ -50,8 +50,12 @@ class PersistenceXmlTest {
         assertThat(properties.get("hibernate.dialect")).isEqualTo("org.hibernate.dialect.PostgreSQLDialect");
         assertThat(properties.get("hibernate.hbm2ddl.auto")).isEqualTo("create-drop");
         assertThat(properties.get("hibernate.generate_statistics")).isEqualTo("true");
+        assertThat(properties.get("hibernate.statistics.statistics_enabled")).isEqualTo("true");
         assertThat(properties.get("hibernate.hikari.maximumPoolSize")).isEqualTo("16");
+        assertThat(properties.get("hibernate.hikari.minimumIdle")).isEqualTo("4");
         assertThat(properties.get("hibernate.hikari.connectionTimeout")).isEqualTo("3000");
+        assertThat(properties.get("hibernate.hikari.idleTimeout")).isEqualTo("600000");
         assertThat(properties.get("hibernate.hikari.maxLifetime")).isEqualTo("1800000");
+        assertThat(properties.get("hibernate.hikari.poolName")).isEqualTo("CortexPool");
     }
 }
