@@ -63,4 +63,25 @@ public class HelixProducer {
             executor.close();
         }
     }
+
+    @Produces
+    @ApplicationScoped
+    public com.helix.profiler.flamegraph.FlameGraphAggregator produceFlameGraphAggregator(Profiler profiler) {
+        log.info("Producing application-scoped FlameGraphAggregator instance");
+        com.helix.profiler.flamegraph.FlameGraphAggregator aggregator = new com.helix.profiler.flamegraph.FlameGraphAggregator();
+        if (profiler != null) {
+            profiler.addListener(aggregator);
+            if (!profiler.isRunning()) {
+                profiler.start();
+            }
+        }
+        return aggregator;
+    }
+
+    public void disposeFlameGraphAggregator(@Disposes com.helix.profiler.flamegraph.FlameGraphAggregator aggregator) {
+        log.info("Disposing FlameGraphAggregator instance");
+        if (aggregator != null) {
+            aggregator.close();
+        }
+    }
 }

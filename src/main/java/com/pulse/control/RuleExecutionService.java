@@ -48,6 +48,9 @@ public class RuleExecutionService {
     @ConfigProperty(name = "helix.cortex.executor.type", defaultValue = "VIRTUAL_THREADS")
     private String configuredExecutorType = "VIRTUAL_THREADS";
 
+    @Inject
+    private com.helix.profiler.flamegraph.FlameGraphAggregator flameGraphAggregator;
+
     private ExecutorType executorType;
     private VirtualThreadRuleExecutor virtualThreadExecutor;
     private ExecutorService platformPool;
@@ -140,6 +143,27 @@ public class RuleExecutionService {
                     sessionRepository.save(session);
                 }
             }
+
+            if (flameGraphAggregator != null) {
+                String rName = (compiledRule != null && compiledRule.getName() != null && !compiledRule.getName().isBlank())
+                        ? compiledRule.getName() : ("rule_" + sessionId);
+                List<String> cpuFrames = List.of(
+                        "com.pulse.boundary.RuleResource.execute",
+                        "com.pulse.control.RuleExecutionService.execute",
+                        "com.helix.engine.RuleExecution." + rName
+                );
+                flameGraphAggregator.addSample(com.helix.profiler.flamegraph.MetricType.CPU_TIME, cpuFrames, Math.max(1L, elapsedNanos / 1_000L));
+
+                long allocBytes = Math.max(128L, opcodeCount * 32L);
+                List<String> allocFrames = List.of(
+                        "com.pulse.boundary.RuleResource.execute",
+                        "com.pulse.control.RuleExecutionService.execute",
+                        "com.helix.engine.RuleExecution." + rName,
+                        "java.lang.Object.<init>"
+                );
+                flameGraphAggregator.addSample(com.helix.profiler.flamegraph.MetricType.ALLOCATION_BYTES, allocFrames, allocBytes);
+            }
+
             return metric;
         };
 
@@ -333,5 +357,13 @@ public class RuleExecutionService {
 
     public void setSessionRepository(RuleSessionRepository sessionRepository) {
         this.sessionRepository = sessionRepository;
+    }
+
+    public com.helix.profiler.flamegraph.FlameGraphAggregator getFlameGraphAggregator() {
+        return flameGraphAggregator;
+    }
+
+    public void setFlameGraphAggregator(com.helix.profiler.flamegraph.FlameGraphAggregator flameGraphAggregator) {
+        this.flameGraphAggregator = flameGraphAggregator;
     }
 }

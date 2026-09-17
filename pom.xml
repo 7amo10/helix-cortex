@@ -80,6 +80,12 @@
             <version>${helix.version}</version>
             <scope>compile</scope>
         </dependency>
+        <dependency>
+            <groupId>com.helix</groupId>
+            <artifactId>engine-profiler</artifactId>
+            <version>${helix.version}</version>
+            <scope>compile</scope>
+        </dependency>
 
         <!-- ASM Bytecode Manipulation for JAR Analysis -->
         <dependency>
