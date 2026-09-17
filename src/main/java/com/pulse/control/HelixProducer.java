@@ -49,4 +49,18 @@ public class HelixProducer {
             profiler.stop();
         }
     }
+
+    @Produces
+    @ApplicationScoped
+    public com.helix.core.executor.VirtualThreadRuleExecutor produceVirtualThreadRuleExecutor() {
+        log.info("Producing application-scoped VirtualThreadRuleExecutor instance");
+        return new com.helix.core.executor.VirtualThreadRuleExecutor();
+    }
+
+    public void disposeVirtualThreadRuleExecutor(@Disposes com.helix.core.executor.VirtualThreadRuleExecutor executor) {
+        log.info("Disposing VirtualThreadRuleExecutor instance");
+        if (executor != null) {
+            executor.close();
+        }
+    }
 }

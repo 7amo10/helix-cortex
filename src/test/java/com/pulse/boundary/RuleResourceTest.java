@@ -155,4 +155,46 @@ class RuleResourceTest {
         assertThat(response.getStatus()).isEqualTo(200);
         assertThat((List<?>) response.getEntity()).isEmpty();
     }
+
+    @Test
+    @DisplayName("POST /rules/execute with valid sessionId returns 200 OK")
+    void testExecuteDirectSuccess() {
+        RuleSession session = new RuleSession("engineer_1", "{}", "check:1.0", SessionStatus.COMPILED);
+        when(repo.findById(10L)).thenReturn(Optional.of(session));
+
+        OpcodeMetric metric = new OpcodeMetric(session, 20L, 12000L, false);
+        when(control.executeAndSave(eq(10L), any())).thenReturn(metric);
+
+        Response response = resource.executeDirect(new ExecutionRequest(10L, Map.of("x", 42)), null);
+
+        assertThat(response.getStatus()).isEqualTo(200);
+        assertThat(response.getEntity()).isEqualTo(metric);
+    }
+
+    @Test
+    @DisplayName("POST /rules/execute with missing sessionId returns 400 Bad Request")
+    void testExecuteDirectMissingSessionId() {
+        Response response = resource.executeDirect(new ExecutionRequest(null, Map.of("x", 42)), null);
+
+        assertThat(response.getStatus()).isEqualTo(400);
+        assertThat(response.getMediaType().toString()).isEqualTo("application/problem+json");
+    }
+
+    @Test
+    @DisplayName("POST /rules/execute/batch with valid payload returns 200 OK")
+    void testExecuteBatchSuccess() {
+        RuleSession session = new RuleSession("engineer_1", "{}", "check:1.0", SessionStatus.COMPILED);
+        when(repo.findById(10L)).thenReturn(Optional.of(session));
+
+        OpcodeMetric metric = new OpcodeMetric(session, 20L, 12000L, false);
+        when(control.executeAndSave(eq(10L), any())).thenReturn(metric);
+
+        com.pulse.boundary.dto.BatchExecutionRequest req = new com.pulse.boundary.dto.BatchExecutionRequest(
+                10L, List.of(Map.of("x", 1), Map.of("x", 2))
+        );
+        Response response = resource.executeBatch(req);
+
+        assertThat(response.getStatus()).isEqualTo(200);
+        assertThat(response.getEntity()).isInstanceOf(com.pulse.boundary.dto.BatchExecutionResponse.class);
+    }
 }
