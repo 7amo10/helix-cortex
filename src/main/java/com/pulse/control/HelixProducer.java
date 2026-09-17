@@ -1,6 +1,6 @@
 package com.pulse.control;
 
-import com.helix.HelixApplication;
+import com.helix.core.HelixEngines;
 import com.helix.api.RuleEngine;
 import com.helix.api.profiler.Profiler;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -22,7 +22,7 @@ public class HelixProducer {
     @ApplicationScoped
     public RuleEngine produceRuleEngine() {
         log.info("Producing application-scoped Helix RuleEngine instance");
-        return HelixApplication.createEngine();
+        return HelixEngines.createDefault();
     }
 
     public void disposeRuleEngine(@Disposes RuleEngine ruleEngine) {
@@ -40,13 +40,48 @@ public class HelixProducer {
     @ApplicationScoped
     public Profiler produceProfiler(RuleEngine engine) {
         log.info("Producing application-scoped Helix Profiler instance");
-        return HelixApplication.createProfiler(engine);
+        return HelixEngines.createProfiler();
     }
 
     public void disposeProfiler(@Disposes Profiler profiler) {
         log.info("Disposing Helix Profiler instance and halting telemetry");
         if (profiler != null && profiler.isRunning()) {
             profiler.stop();
+        }
+    }
+
+    @Produces
+    @ApplicationScoped
+    public com.helix.core.executor.VirtualThreadRuleExecutor produceVirtualThreadRuleExecutor() {
+        log.info("Producing application-scoped VirtualThreadRuleExecutor instance");
+        return new com.helix.core.executor.VirtualThreadRuleExecutor();
+    }
+
+    public void disposeVirtualThreadRuleExecutor(@Disposes com.helix.core.executor.VirtualThreadRuleExecutor executor) {
+        log.info("Disposing VirtualThreadRuleExecutor instance");
+        if (executor != null) {
+            executor.close();
+        }
+    }
+
+    @Produces
+    @ApplicationScoped
+    public com.helix.profiler.flamegraph.FlameGraphAggregator produceFlameGraphAggregator(Profiler profiler) {
+        log.info("Producing application-scoped FlameGraphAggregator instance");
+        com.helix.profiler.flamegraph.FlameGraphAggregator aggregator = new com.helix.profiler.flamegraph.FlameGraphAggregator();
+        if (profiler != null) {
+            profiler.addListener(aggregator);
+            if (!profiler.isRunning()) {
+                profiler.start();
+            }
+        }
+        return aggregator;
+    }
+
+    public void disposeFlameGraphAggregator(@Disposes com.helix.profiler.flamegraph.FlameGraphAggregator aggregator) {
+        log.info("Disposing FlameGraphAggregator instance");
+        if (aggregator != null) {
+            aggregator.close();
         }
     }
 }

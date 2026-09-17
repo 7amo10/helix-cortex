@@ -39,11 +39,14 @@ class TelemetryResourceTest {
     @Mock
     private Sse sse;
 
+    @Mock
+    private com.pulse.control.FlameGraphControl flameGraphControl;
+
     private TelemetryResource resource;
 
     @BeforeEach
     void setUp() {
-        resource = new TelemetryResource(telemetryControl);
+        resource = new TelemetryResource(telemetryControl, flameGraphControl);
     }
 
     @Test
@@ -136,5 +139,111 @@ class TelemetryResourceTest {
         liveControl.sampleAndBroadcast();
 
         verify(mockBroadcaster, times(2)).broadcast(any(OutboundSseEvent.class));
+    }
+
+    @Test
+    @DisplayName("FlameGraph endpoints have proper Path, Produces, and RolesAllowed annotations")
+    void testFlameGraphAnnotations() throws NoSuchMethodException {
+        Method flameGraphMethod = TelemetryResource.class.getMethod("getFlameGraph", String.class, String.class, jakarta.ws.rs.core.HttpHeaders.class);
+        assertThat(flameGraphMethod.isAnnotationPresent(GET.class)).isTrue();
+        assertThat(flameGraphMethod.isAnnotationPresent(Path.class)).isTrue();
+        assertThat(flameGraphMethod.getAnnotation(Path.class).value()).isEqualTo("/flamegraph");
+        assertThat(flameGraphMethod.isAnnotationPresent(Produces.class)).isTrue();
+        assertThat(flameGraphMethod.getAnnotation(Produces.class).value()).contains(MediaType.APPLICATION_JSON, MediaType.TEXT_PLAIN, MediaType.TEXT_HTML);
+        assertThat(flameGraphMethod.isAnnotationPresent(RolesAllowed.class)).isTrue();
+        assertThat(flameGraphMethod.getAnnotation(RolesAllowed.class).value()).contains("ADMIN", "ENGINEER");
+
+        Method sseMethod = TelemetryResource.class.getMethod("streamFlameGraph", SseEventSink.class, Sse.class, String.class, String.class);
+        assertThat(sseMethod.isAnnotationPresent(GET.class)).isTrue();
+        assertThat(sseMethod.isAnnotationPresent(Path.class)).isTrue();
+        assertThat(sseMethod.getAnnotation(Path.class).value()).isEqualTo("/flamegraph/stream");
+        assertThat(sseMethod.isAnnotationPresent(Produces.class)).isTrue();
+        assertThat(sseMethod.getAnnotation(Produces.class).value()).contains(MediaType.SERVER_SENT_EVENTS);
+        assertThat(sseMethod.isAnnotationPresent(RolesAllowed.class)).isTrue();
+        assertThat(sseMethod.getAnnotation(RolesAllowed.class).value()).contains("ADMIN", "ENGINEER");
+    }
+
+    @Test
+    @DisplayName("getFlameGraph format=text returns plain-text folded stack lines")
+    void testGetFlameGraphPlainText() {
+        when(flameGraphControl.getFoldedText(com.helix.profiler.flamegraph.MetricType.CPU_TIME))
+                .thenReturn("main;foo;bar 42\nmain;foo;baz 18\n");
+
+        Response resp = resource.getFlameGraph("CPU_TIME", "text", null);
+
+        assertThat(resp.getStatus()).isEqualTo(200);
+        assertThat(resp.getMediaType()).isEqualTo(MediaType.TEXT_PLAIN_TYPE);
+        assertThat(resp.getEntity()).isEqualTo("main;foo;bar 42\nmain;foo;baz 18\n");
+    }
+
+    @Test
+    @DisplayName("getFlameGraph format=d3 returns d3 hierarchical FlameGraphNodeDto")
+    void testGetFlameGraphD3() {
+        com.pulse.boundary.dto.FlameGraphNodeDto d3Tree = new com.pulse.boundary.dto.FlameGraphNodeDto(
+                "root", 100L, java.util.List.of()
+        );
+        when(flameGraphControl.getD3Tree(com.helix.profiler.flamegraph.MetricType.CPU_TIME)).thenReturn(d3Tree);
+
+        Response resp = resource.getFlameGraph("CPU_TIME", "d3", null);
+
+        assertThat(resp.getStatus()).isEqualTo(200);
+        assertThat(resp.getMediaType()).isEqualTo(MediaType.APPLICATION_JSON_TYPE);
+        assertThat(resp.getEntity()).isEqualTo(d3Tree);
+    }
+
+    @Test
+    @DisplayName("getFlameGraph format=speedscope returns Speedscope JSON structure")
+    void testGetFlameGraphSpeedscope() {
+        java.util.Map<String, Object> speedscopeJson = java.util.Map.of(
+                "$schema", "https://www.speedscope.app/file-format-spec.json",
+                "version", "0.1.2"
+        );
+        when(flameGraphControl.getSpeedscopeJson(com.helix.profiler.flamegraph.MetricType.CPU_TIME)).thenReturn(speedscopeJson);
+
+        Response resp = resource.getFlameGraph("CPU_TIME", "speedscope", null);
+
+        assertThat(resp.getStatus()).isEqualTo(200);
+        assertThat(resp.getMediaType()).isEqualTo(MediaType.APPLICATION_JSON_TYPE);
+        assertThat(resp.getEntity()).isEqualTo(speedscopeJson);
+    }
+
+    @Test
+    @DisplayName("getFlameGraph format=html returns self-contained HTML flame graph")
+    void testGetFlameGraphHtml() {
+        when(flameGraphControl.getHtmlFlameGraph(com.helix.profiler.flamegraph.MetricType.CPU_TIME))
+                .thenReturn("<!DOCTYPE html><html><body>Flame Graph</body></html>");
+
+        Response resp = resource.getFlameGraph("CPU_TIME", "html", null);
+
+        assertThat(resp.getStatus()).isEqualTo(200);
+        assertThat(resp.getMediaType()).isEqualTo(MediaType.TEXT_HTML_TYPE);
+        assertThat(resp.getEntity()).asString().contains("<!DOCTYPE html>");
+    }
+
+    @Test
+    @DisplayName("getFlameGraph default JSON returns FlameGraphResponse")
+    void testGetFlameGraphDefaultJson() {
+        com.pulse.boundary.dto.FlameGraphResponse mockResponse = new com.pulse.boundary.dto.FlameGraphResponse(
+                "CPU_TIME", "samples", 100L, 2, 3,
+                java.util.List.of("main;foo 100"),
+                new com.pulse.boundary.dto.FlameGraphNodeDto("root", 100L, java.util.List.of()),
+                java.util.Map.of("version", "0.1.2"),
+                Instant.now()
+        );
+        when(flameGraphControl.getFlameGraphResponse(com.helix.profiler.flamegraph.MetricType.CPU_TIME))
+                .thenReturn(mockResponse);
+
+        Response resp = resource.getFlameGraph("CPU_TIME", null, null);
+
+        assertThat(resp.getStatus()).isEqualTo(200);
+        assertThat(resp.getMediaType()).isEqualTo(MediaType.APPLICATION_JSON_TYPE);
+        assertThat(resp.getEntity()).isEqualTo(mockResponse);
+    }
+
+    @Test
+    @DisplayName("streamFlameGraph delegates registration to FlameGraphControl")
+    void testStreamFlameGraphDelegates() {
+        resource.streamFlameGraph(sink, sse, "CPU_TIME", "json");
+        verify(flameGraphControl).registerSink(sink, sse, com.helix.profiler.flamegraph.MetricType.CPU_TIME, "json");
     }
 }
