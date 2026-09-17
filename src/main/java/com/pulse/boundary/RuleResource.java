@@ -4,6 +4,7 @@ import com.helix.api.RuleCompilationException;
 import com.pulse.boundary.dto.ExecutionRequest;
 import com.pulse.boundary.dto.RuleRequest;
 import com.pulse.boundary.filter.Secured;
+import com.pulse.control.RuleExecutionService;
 import com.pulse.control.RuleSessionControl;
 import com.pulse.control.RuleSessionRepository;
 import com.pulse.entity.OpcodeMetric;
@@ -31,6 +32,7 @@ import org.eclipse.microprofile.openapi.annotations.tags.Tag;
 
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 /**
@@ -53,6 +55,9 @@ public class RuleResource {
     @Inject
     private RuleSessionRepository repo;
 
+    @Inject
+    private RuleExecutionService executionService;
+
     @Context
     private SecurityContext securityContext;
 
@@ -60,9 +65,14 @@ public class RuleResource {
     }
 
     public RuleResource(RuleSessionControl control, RuleSessionRepository repo, SecurityContext securityContext) {
+        this(control, repo, securityContext, null);
+    }
+
+    public RuleResource(RuleSessionControl control, RuleSessionRepository repo, SecurityContext securityContext, RuleExecutionService executionService) {
         this.control = control;
         this.repo = repo;
         this.securityContext = securityContext;
+        this.executionService = executionService;
     }
 
     @POST
@@ -119,6 +129,67 @@ public class RuleResource {
         var variables = req != null && req.variables() != null ? req.variables() : Collections.<String, Object>emptyMap();
         OpcodeMetric metric = control.executeAndSave(sessionId, variables);
         return Response.ok(metric).build();
+    }
+
+    @POST
+    @Path("/execute")
+    @RolesAllowed({"ENGINEER", "ADMIN"})
+    @Transactional
+    @Operation(summary = "Execute rule via virtual threads", description = "Evaluates rule on Project Loom virtual threads with security context propagation")
+    @APIResponses({
+            @APIResponse(responseCode = "200", description = "Rule evaluated successfully with virtual threads"),
+            @APIResponse(responseCode = "400", description = "Missing sessionId or malformed input payload"),
+            @APIResponse(responseCode = "404", description = "Rule session not found")
+    })
+    public Response executeDirect(ExecutionRequest req, @QueryParam("sessionId") Long querySessionId) {
+        Long targetSessionId = (req != null && req.sessionId() != null) ? req.sessionId() : querySessionId;
+        if (targetSessionId == null) {
+            return Response.status(Response.Status.BAD_REQUEST)
+                    .type(PROBLEM_JSON)
+                    .entity("{\"status\":400,\"title\":\"Bad Request\",\"detail\":\"sessionId is required in payload or query parameter\"}")
+                    .build();
+        }
+        return executeRule(targetSessionId, req);
+    }
+
+    @POST
+    @Path("/execute/batch")
+    @RolesAllowed({"ENGINEER", "ADMIN"})
+    @Transactional
+    @Operation(summary = "Batch evaluate rules via virtual threads", description = "Evaluates batch inputs concurrently across Project Loom virtual threads")
+    @APIResponses({
+            @APIResponse(responseCode = "200", description = "Batch executed successfully with aggregated opcode metrics"),
+            @APIResponse(responseCode = "400", description = "Malformed batch execution request"),
+            @APIResponse(responseCode = "404", description = "Rule session not found")
+    })
+    public Response executeBatch(com.pulse.boundary.dto.BatchExecutionRequest req) {
+        if (req == null || req.sessionId() == null) {
+            return Response.status(Response.Status.BAD_REQUEST)
+                    .type(PROBLEM_JSON)
+                    .entity("{\"status\":400,\"title\":\"Bad Request\",\"detail\":\"sessionId is required\"}")
+                    .build();
+        }
+
+        if (repo != null && repo.findById(req.sessionId()).isEmpty()) {
+            return Response.status(Response.Status.NOT_FOUND)
+                    .type(PROBLEM_JSON)
+                    .entity(String.format("{\"status\":404,\"title\":\"Not Found\",\"detail\":\"Session not found with id: %d\"}", req.sessionId()))
+                    .build();
+        }
+
+        if (executionService != null) {
+            var response = executionService.executeBatch(req, securityContext);
+            return Response.ok(response).build();
+        }
+
+        var variablesList = req.batch() != null ? req.batch() : Collections.<Map<String, Object>>emptyList();
+        List<OpcodeMetric> metrics = new java.util.ArrayList<>();
+        long start = System.nanoTime();
+        for (var vars : variablesList) {
+            metrics.add(control.executeAndSave(req.sessionId(), vars));
+        }
+        long totalTime = System.nanoTime() - start;
+        return Response.ok(new com.pulse.boundary.dto.BatchExecutionResponse(req.sessionId(), metrics.size(), totalTime, metrics)).build();
     }
 
     @GET
@@ -205,5 +276,9 @@ public class RuleResource {
 
     public void setSecurityContext(SecurityContext securityContext) {
         this.securityContext = securityContext;
+    }
+
+    public void setExecutionService(RuleExecutionService executionService) {
+        this.executionService = executionService;
     }
 }

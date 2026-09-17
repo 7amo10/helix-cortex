@@ -42,14 +42,22 @@ public class RuleSessionControl {
     @Inject
     private RuleSessionRepository sessionRepository;
 
+    @Inject
+    private RuleExecutionService executionService;
+
     private final Map<String, CompiledRule> compiledRuleCache = new ConcurrentHashMap<>();
 
     public RuleSessionControl() {
     }
 
     public RuleSessionControl(RuleEngine ruleEngine, RuleSessionRepository sessionRepository) {
+        this(ruleEngine, sessionRepository, null);
+    }
+
+    public RuleSessionControl(RuleEngine ruleEngine, RuleSessionRepository sessionRepository, RuleExecutionService executionService) {
         this.ruleEngine = ruleEngine;
         this.sessionRepository = sessionRepository;
+        this.executionService = executionService;
     }
 
     /**
@@ -79,6 +87,9 @@ public class RuleSessionControl {
         CompiledRule compiledRule = ruleEngine.compile(rule);
         String compiledId = compiledRule.getName() + ":" + compiledRule.getVersion();
         compiledRuleCache.put(compiledId, compiledRule);
+        if (executionService != null) {
+            executionService.cacheCompiledRule(compiledId, compiledRule);
+        }
 
         String ruleJson = serializeRuleRequest(req);
         RuleSession session = new RuleSession(engineerId, ruleJson, compiledId, SessionStatus.COMPILED);
@@ -95,6 +106,10 @@ public class RuleSessionControl {
      */
     public OpcodeMetric executeAndSave(Long sessionId, Map<String, Object> variables) {
         Objects.requireNonNull(sessionId, "sessionId cannot be null");
+
+        if (executionService != null) {
+            return executionService.execute(sessionId, variables, SecurityContextHolder.getContext());
+        }
 
         RuleSession session = sessionRepository.findById(sessionId)
                 .orElseThrow(() -> new EntityNotFoundException("Session not found with id: " + sessionId));
@@ -194,5 +209,9 @@ public class RuleSessionControl {
 
     public void setSessionRepository(RuleSessionRepository sessionRepository) {
         this.sessionRepository = sessionRepository;
+    }
+
+    public void setExecutionService(RuleExecutionService executionService) {
+        this.executionService = executionService;
     }
 }
