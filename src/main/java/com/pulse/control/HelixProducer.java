@@ -1,6 +1,6 @@
 package com.pulse.control;
 
-import com.helix.HelixApplication;
+import com.helix.core.HelixEngines;
 import com.helix.api.RuleEngine;
 import com.helix.api.profiler.Profiler;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -22,7 +22,7 @@ public class HelixProducer {
     @ApplicationScoped
     public RuleEngine produceRuleEngine() {
         log.info("Producing application-scoped Helix RuleEngine instance");
-        return HelixApplication.createEngine();
+        return HelixEngines.createDefault();
     }
 
     public void disposeRuleEngine(@Disposes RuleEngine ruleEngine) {
@@ -40,7 +40,7 @@ public class HelixProducer {
     @ApplicationScoped
     public Profiler produceProfiler(RuleEngine engine) {
         log.info("Producing application-scoped Helix Profiler instance");
-        return HelixApplication.createProfiler(engine);
+        return HelixEngines.createProfiler();
     }
 
     public void disposeProfiler(@Disposes Profiler profiler) {

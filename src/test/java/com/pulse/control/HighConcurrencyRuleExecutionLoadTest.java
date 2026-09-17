@@ -1,6 +1,6 @@
 package com.pulse.control;
 
-import com.helix.HelixApplication;
+import com.helix.core.HelixEngines;
 import com.helix.api.CompiledRule;
 import com.helix.api.RuleEngine;
 import com.helix.core.parser.RuleSchema;
@@ -54,7 +54,7 @@ class HighConcurrencyRuleExecutionLoadTest {
 
     @BeforeEach
     void setUp() throws Exception {
-        ruleEngine = HelixApplication.createEngine();
+        ruleEngine = HelixEngines.createDefault();
         executionService = new RuleExecutionService(ruleEngine, sessionRepository, ExecutorType.VIRTUAL_THREADS);
 
         RuleSchema schema = new RuleSchema(
