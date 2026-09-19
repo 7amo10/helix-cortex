@@ -54,7 +54,7 @@ class DockerConfigurationTest {
     }
 
     @Test
-    @DisplayName("Acceptance Criteria 3: docker-compose.yml defines postgres (postgres:16-alpine with healthcheck) and helix-cortex services")
+    @DisplayName("Acceptance Criteria 3: docker-compose.yml defines postgres, redis, kafka, and clustered helix-cortex services with healthchecks")
     void testDockerComposeServices() throws Exception {
         Path composePath = resolveFile("docker-compose.yml");
         assertThat(Files.exists(composePath)).isTrue();
@@ -65,9 +65,18 @@ class DockerConfigurationTest {
         assertThat(content).contains("healthcheck:");
         assertThat(content).contains("pg_isready");
         assertThat(content).contains("pulsedb");
-        assertThat(content).contains("helix-cortex:");
+
+        assertThat(content).contains("redis:");
+        assertThat(content).contains("redis:7-alpine");
+
+        assertThat(content).contains("kafka:");
+        assertThat(content).contains("apache/kafka:3.7.0");
+
+        assertThat(content).contains("helix-cortex-1:");
+        assertThat(content).contains("helix-cortex-2:");
         assertThat(content).contains("condition: service_healthy");
         assertThat(content).contains("8080:8080");
+        assertThat(content).contains("8081:8080");
     }
 
     @Test
