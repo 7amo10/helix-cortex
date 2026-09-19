@@ -3,7 +3,9 @@ package com.pulse.boundary;
 import com.helix.profiler.flamegraph.MetricType;
 import com.pulse.boundary.dto.JvmTelemetrySnapshot;
 import com.pulse.boundary.filter.Secured;
+import com.pulse.boundary.dto.StreamThroughputSnapshot;
 import com.pulse.control.FlameGraphControl;
+import com.pulse.control.StreamThroughputControl;
 import com.pulse.control.TelemetryControl;
 import jakarta.annotation.security.RolesAllowed;
 import jakarta.enterprise.context.RequestScoped;
@@ -26,7 +28,8 @@ import org.eclipse.microprofile.openapi.annotations.tags.Tag;
 
 /**
  * JAX-RS resource exposing live JVM telemetry via Server-Sent Events (SSE),
- * point-in-time snapshot inspection, and folded stack trace profiling for flame graphs.
+ * point-in-time snapshot inspection, folded stack trace profiling for flame graphs,
+ * and real-time streaming throughput telemetry.
  */
 @Path("/telemetry")
 @Tag(name = "telemetry", description = "HotSpot JVM runtime telemetry snapshots, folded stack profiling, and SSE streaming")
@@ -40,16 +43,25 @@ public class TelemetryResource {
     @Inject
     private FlameGraphControl flameGraphControl;
 
+    @Inject
+    private StreamThroughputControl throughputControl;
+
     public TelemetryResource() {
     }
 
     public TelemetryResource(TelemetryControl telemetryControl) {
-        this(telemetryControl, null);
+        this(telemetryControl, null, null);
     }
 
     public TelemetryResource(TelemetryControl telemetryControl, FlameGraphControl flameGraphControl) {
+        this(telemetryControl, flameGraphControl, null);
+    }
+
+    public TelemetryResource(TelemetryControl telemetryControl, FlameGraphControl flameGraphControl,
+                             StreamThroughputControl throughputControl) {
         this.telemetryControl = telemetryControl;
         this.flameGraphControl = flameGraphControl;
+        this.throughputControl = throughputControl;
     }
 
     /**
@@ -196,6 +208,53 @@ public class TelemetryResource {
         }
     }
 
+    /**
+     * Server-Sent Events endpoint streaming real-time streaming throughput,
+     * queue depth, and P99 latency every 1,000 ms.
+     *
+     * @param sink client SSE event sink
+     * @param sse JAX-RS SSE context
+     */
+    @GET
+    @Path("/stream/throughput")
+    @Produces(MediaType.SERVER_SENT_EVENTS)
+    @RolesAllowed({"ADMIN", "ENGINEER", "OPERATOR"})
+    @Operation(summary = "Stream real-time throughput telemetry via SSE",
+            description = "Establishes a Server-Sent Events stream broadcasting events/sec, queue depth, and P99 latency every 1,000 ms")
+    @APIResponses({
+            @APIResponse(responseCode = "200", description = "SSE throughput stream established successfully"),
+            @APIResponse(responseCode = "401", description = "Unauthorized - missing or invalid JWT"),
+            @APIResponse(responseCode = "403", description = "Forbidden - requires ADMIN, ENGINEER, or OPERATOR role")
+    })
+    public void streamThroughput(@Context SseEventSink sink, @Context Sse sse) {
+        if (sink != null && throughputControl != null) {
+            throughputControl.registerSink(sink, sse);
+        }
+    }
+
+    /**
+     * Point-in-time snapshot of stream throughput, queue depth, and P99 latency.
+     *
+     * @return 200 OK with StreamThroughputSnapshot
+     */
+    @GET
+    @Path("/stream/throughput/snapshot")
+    @Produces(MediaType.APPLICATION_JSON)
+    @RolesAllowed({"ADMIN", "ENGINEER", "OPERATOR"})
+    @Operation(summary = "Get stream throughput snapshot",
+            description = "Returns an instantaneous snapshot of streaming events/sec, queue depth, and P99 latency")
+    @APIResponses({
+            @APIResponse(responseCode = "200", description = "Current throughput snapshot"),
+            @APIResponse(responseCode = "401", description = "Unauthorized - missing or invalid JWT"),
+            @APIResponse(responseCode = "403", description = "Forbidden - requires ADMIN, ENGINEER, or OPERATOR role")
+    })
+    public Response getThroughputSnapshot() {
+        if (throughputControl == null) {
+            return Response.serverError().build();
+        }
+        return Response.ok(throughputControl.currentSnapshot()).build();
+    }
+
     public void setTelemetryControl(TelemetryControl telemetryControl) {
         this.telemetryControl = telemetryControl;
     }
@@ -206,5 +265,13 @@ public class TelemetryResource {
 
     public void setFlameGraphControl(FlameGraphControl flameGraphControl) {
         this.flameGraphControl = flameGraphControl;
+    }
+
+    public StreamThroughputControl getThroughputControl() {
+        return throughputControl;
+    }
+
+    public void setThroughputControl(StreamThroughputControl throughputControl) {
+        this.throughputControl = throughputControl;
     }
 }
