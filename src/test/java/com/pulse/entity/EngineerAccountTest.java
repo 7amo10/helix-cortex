@@ -16,9 +16,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 class EngineerAccountTest {
 
     @Test
-    @DisplayName("EngineRole enum should have exactly two values: ENGINEER and ADMIN")
+    @DisplayName("EngineRole enum should have values: ENGINEER, OPERATOR, and ADMIN")
     void testEngineRoleValues() {
-        assertThat(EngineRole.values()).containsExactlyInAnyOrder(EngineRole.ENGINEER, EngineRole.ADMIN);
+        assertThat(EngineRole.values()).containsExactlyInAnyOrder(EngineRole.ENGINEER, EngineRole.OPERATOR, EngineRole.ADMIN);
     }
 
     @Test
