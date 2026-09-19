@@ -45,19 +45,43 @@ public class RuleSessionControl {
     @Inject
     private RuleExecutionService executionService;
 
+    @Inject
+    private RuleCompilerService compilerService;
+
+    @Inject
+    private L4CacheService l4CacheService;
+
     private final Map<String, CompiledRule> compiledRuleCache = new ConcurrentHashMap<>();
 
     public RuleSessionControl() {
     }
 
     public RuleSessionControl(RuleEngine ruleEngine, RuleSessionRepository sessionRepository) {
-        this(ruleEngine, sessionRepository, null);
+        this(ruleEngine, sessionRepository, null, null);
     }
 
     public RuleSessionControl(RuleEngine ruleEngine, RuleSessionRepository sessionRepository, RuleExecutionService executionService) {
+        this(ruleEngine, sessionRepository, executionService, null);
+    }
+
+    public RuleSessionControl(RuleEngine ruleEngine, RuleSessionRepository sessionRepository, RuleExecutionService executionService, RuleCompilerService compilerService) {
         this.ruleEngine = ruleEngine;
         this.sessionRepository = sessionRepository;
         this.executionService = executionService;
+        this.compilerService = compilerService;
+    }
+
+    @jakarta.annotation.PostConstruct
+    public void init() {
+        if (l4CacheService != null) {
+            l4CacheService.registerInvalidationListener(ruleName -> {
+                if (ruleName == null || "__ALL__".equals(ruleName)) {
+                    compiledRuleCache.clear();
+                } else {
+                    compiledRuleCache.entrySet().removeIf(e -> e.getKey().startsWith(ruleName + ":") || e.getKey().equals(ruleName));
+                }
+            });
+        }
     }
 
     /**
@@ -84,7 +108,12 @@ public class RuleSessionControl {
                 schema
         );
 
-        CompiledRule compiledRule = ruleEngine.compile(rule);
+        CompiledRule compiledRule;
+        if (compilerService != null) {
+            compiledRule = compilerService.compile(rule);
+        } else {
+            compiledRule = ruleEngine.compile(rule);
+        }
         String compiledId = compiledRule.getName() + ":" + compiledRule.getVersion();
         compiledRuleCache.put(compiledId, compiledRule);
         if (executionService != null) {
