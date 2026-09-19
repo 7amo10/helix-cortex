@@ -54,6 +54,9 @@ public class StreamResource {
     @Inject
     private StreamExecutionRepository repository;
 
+    @Inject
+    private com.pulse.control.StreamThroughputControl throughputControl;
+
     @Context
     private SecurityContext securityContext;
 
@@ -62,9 +65,16 @@ public class StreamResource {
 
     public StreamResource(StreamIngestionService ingestionService, StreamConsumerCoordinator coordinator,
                           StreamExecutionRepository repository, SecurityContext securityContext) {
+        this(ingestionService, coordinator, repository, null, securityContext);
+    }
+
+    public StreamResource(StreamIngestionService ingestionService, StreamConsumerCoordinator coordinator,
+                          StreamExecutionRepository repository, com.pulse.control.StreamThroughputControl throughputControl,
+                          SecurityContext securityContext) {
         this.ingestionService = ingestionService;
         this.coordinator = coordinator;
         this.repository = repository;
+        this.throughputControl = throughputControl;
         this.securityContext = securityContext;
     }
 
@@ -192,6 +202,35 @@ public class StreamResource {
         }
 
         return Response.ok(record.get()).build();
+    }
+
+    @GET
+    @Path("/throughput")
+    @Produces(MediaType.SERVER_SENT_EVENTS)
+    @RolesAllowed({"ENGINEER", "OPERATOR", "ADMIN"})
+    @Operation(summary = "Stream throughput telemetry via SSE",
+            description = "Establishes a Server-Sent Events stream broadcasting events/sec, queue depth, and P99 latency every 1,000 ms")
+    public void streamThroughput(@Context jakarta.ws.rs.sse.SseEventSink sink, @Context jakarta.ws.rs.sse.Sse sse) {
+        if (sink != null && throughputControl != null) {
+            throughputControl.registerSink(sink, sse);
+        }
+    }
+
+    @GET
+    @Path("/throughput/snapshot")
+    @Produces(MediaType.APPLICATION_JSON)
+    @RolesAllowed({"ENGINEER", "OPERATOR", "ADMIN"})
+    @Operation(summary = "Get current throughput snapshot",
+            description = "Returns current snapshot of events/sec, queue depth, and P99 latency")
+    public Response getThroughputSnapshot() {
+        if (throughputControl == null) {
+            return Response.serverError().build();
+        }
+        return Response.ok(throughputControl.currentSnapshot()).build();
+    }
+
+    public void setThroughputControl(com.pulse.control.StreamThroughputControl throughputControl) {
+        this.throughputControl = throughputControl;
     }
 
     public void setIngestionService(StreamIngestionService ingestionService) {

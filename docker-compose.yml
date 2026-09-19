@@ -1,3 +1,6 @@
+# Helix Cortex Multi-Node Clustered Docker Compose
+# Orchestrates PostgreSQL 16, Redis 7, Apache Kafka (KRaft), and multi-node Helix Cortex
+
 services:
   postgres:
     image: postgres:16-alpine
@@ -6,7 +9,7 @@ services:
     environment:
       POSTGRES_DB: pulsedb
       POSTGRES_USER: pulse
-      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-helixcortexsecret}
     ports:
       - "5432:5432"
     volumes:
@@ -17,20 +20,107 @@ services:
       timeout: 3s
       retries: 10
 
-  helix-cortex:
+  redis:
+    image: redis:7-alpine
+    container_name: cortex-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  kafka:
+    image: apache/kafka:3.7.0
+    container_name: cortex-kafka
+    restart: unless-stopped
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_NUM_PARTITIONS: 3
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-cluster.sh cluster-id --bootstrap-server localhost:9092 || exit 0"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # Service cluster: helix-cortex:
+  helix-cortex-1:
     build: .
-    container_name: helix-cortex
+    container_name: helix-cortex-1
     restart: unless-stopped
     ports:
       - "8080:8080"
     environment:
-      JWT_SECRET: ${JWT_SECRET}
+      JWT_SECRET: ${JWT_SECRET:-helix-cortex-default-super-secret-key-32-bytes-minimum}
       DB_URL: jdbc:postgresql://postgres:5432/pulsedb
       DB_USER: pulse
-      DB_PASSWORD: ${DB_PASSWORD}
+      DB_PASSWORD: ${DB_PASSWORD:-helixcortexsecret}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      NODE_ID: cortex-node-1
     depends_on:
       postgres:
         condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8080/ || exit 0"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  helix-cortex-2:
+    build: .
+    container_name: helix-cortex-2
+    restart: unless-stopped
+    ports:
+      - "8081:8080"
+    environment:
+      JWT_SECRET: ${JWT_SECRET:-helix-cortex-default-super-secret-key-32-bytes-minimum}
+      DB_URL: jdbc:postgresql://postgres:5432/pulsedb
+      DB_USER: pulse
+      DB_PASSWORD: ${DB_PASSWORD:-helixcortexsecret}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      NODE_ID: cortex-node-2
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8080/ || exit 0"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
 
 volumes:
   postgres-data:
+  redis-data:
+  kafka-data:
