@@ -45,7 +45,7 @@ public class ModelRegistryService implements ModelRegistry {
     private ModelActivationBroadcaster activationBroadcaster;
 
     @Inject
-    @ConfigProperty(name = "helix.onnx.model.store.path", defaultValue = "/var/helix/models")
+    @ConfigProperty(name = "helix.onnx.model.store.path", defaultValue = "/opt/helix/models")
     private String modelStorePath;
 
     @Inject
