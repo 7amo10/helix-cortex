@@ -6,5 +6,6 @@ package com.pulse.entity;
 public enum EngineRole {
     ENGINEER,
     OPERATOR,
+    DATA_SCIENTIST,
     ADMIN
 }
