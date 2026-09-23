@@ -89,4 +89,44 @@ class DockerConfigurationTest {
         assertThat(content).contains("JWT_SECRET=");
         assertThat(content).contains("DB_PASSWORD=");
     }
+
+    @Test
+    @DisplayName("ONNX Model Storage: docker-compose.yml defines persistent volume helix-models-data and mounts at /opt/helix/models")
+    void testDockerComposeOnnxModelStorageVolume() throws Exception {
+        Path composePath = resolveFile("docker-compose.yml");
+        assertThat(Files.exists(composePath)).isTrue();
+
+        String content = Files.readString(composePath);
+        assertThat(content).contains("helix-models-data:");
+        assertThat(content).contains("- helix-models-data:/opt/helix/models");
+        assertThat(content).contains("MODEL_STORE_PATH: ${MODEL_STORE_PATH:-/opt/helix/models}");
+        assertThat(content).contains("ONNX_POOL_MAX_SIZE: ${ONNX_POOL_MAX_SIZE:-16}");
+        assertThat(content).contains("ONNX_POOL_MAX_WAIT_MS: ${ONNX_POOL_MAX_WAIT_MS:-500}");
+    }
+
+    @Test
+    @DisplayName("ONNX Model Storage: .env.example documents ONNX model store path and pool settings")
+    void testEnvExampleOnnxVariables() throws Exception {
+        Path envExamplePath = resolveFile(".env.example");
+        assertThat(Files.exists(envExamplePath)).isTrue();
+
+        String content = Files.readString(envExamplePath);
+        assertThat(content).contains("MODEL_STORE_PATH=/opt/helix/models");
+        assertThat(content).contains("ONNX_POOL_MAX_SIZE=16");
+        assertThat(content).contains("ONNX_POOL_MAX_WAIT_MS=500");
+    }
+
+    @Test
+    @DisplayName("ONNX Model Storage: microprofile-config.properties specifies ONNX model storage and pool properties")
+    void testMicroprofileConfigOnnxProperties() throws Exception {
+        Path mpConfigPath = resolveFile("src/main/resources/META-INF/microprofile-config.properties");
+        assertThat(Files.exists(mpConfigPath)).isTrue();
+
+        String content = Files.readString(mpConfigPath);
+        assertThat(content).contains("helix.onnx.model.store.path=${MODEL_STORE_PATH:/opt/helix/models}");
+        assertThat(content).contains("helix.onnx.model.max-size-bytes=26214400");
+        assertThat(content).contains("helix.onnx.pool.max-size=${ONNX_POOL_MAX_SIZE:16}");
+        assertThat(content).contains("helix.onnx.pool.max-wait-ms=${ONNX_POOL_MAX_WAIT_MS:500}");
+        assertThat(content).contains("helix.models.redis.topic=helix:models:activate");
+    }
 }
