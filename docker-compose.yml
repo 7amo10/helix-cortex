@@ -79,6 +79,11 @@ services:
       REDIS_PORT: 6379
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       NODE_ID: cortex-node-1
+      MODEL_STORE_PATH: ${MODEL_STORE_PATH:-/opt/helix/models}
+      ONNX_POOL_MAX_SIZE: ${ONNX_POOL_MAX_SIZE:-16}
+      ONNX_POOL_MAX_WAIT_MS: ${ONNX_POOL_MAX_WAIT_MS:-500}
+    volumes:
+      - helix-models-data:/opt/helix/models
     depends_on:
       postgres:
         condition: service_healthy
@@ -107,6 +112,11 @@ services:
       REDIS_PORT: 6379
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       NODE_ID: cortex-node-2
+      MODEL_STORE_PATH: ${MODEL_STORE_PATH:-/opt/helix/models}
+      ONNX_POOL_MAX_SIZE: ${ONNX_POOL_MAX_SIZE:-16}
+      ONNX_POOL_MAX_WAIT_MS: ${ONNX_POOL_MAX_WAIT_MS:-500}
+    volumes:
+      - helix-models-data:/opt/helix/models
     depends_on:
       postgres:
         condition: service_healthy
@@ -124,3 +134,4 @@ volumes:
   postgres-data:
   redis-data:
   kafka-data:
+  helix-models-data:
