@@ -51,6 +51,9 @@ public class RuleExecutionService {
     @Inject
     private com.helix.profiler.flamegraph.FlameGraphAggregator flameGraphAggregator;
 
+    @Inject
+    private RuleCompilerService compilerService;
+
     private ExecutorType executorType;
     private VirtualThreadRuleExecutor virtualThreadExecutor;
     private ExecutorService platformPool;
@@ -129,6 +132,9 @@ public class RuleExecutionService {
             long elapsedNanos = result.getExecutionTimeNanos() > 0 ?
                     result.getExecutionTimeNanos() : (System.nanoTime() - startNanos);
             boolean success = result.isSuccess();
+            if (!success && result.getError().isPresent()) {
+                log.error("Rule execution failed with exception: {}", result.getError().get().getMessage(), result.getError().get());
+            }
             if (session != null) {
                 session.setStatus(success ? SessionStatus.EXECUTED : SessionStatus.FAILED);
             }
@@ -297,26 +303,36 @@ public class RuleExecutionService {
             return compiled;
         }
 
-        if (session != null && session.getRuleJson() != null && ruleEngine != null) {
+        if (session != null && session.getRuleJson() != null) {
             try {
                 RuleRequest req = mapper.readValue(session.getRuleJson(), RuleRequest.class);
-                RuleSchema schema = new RuleSchema(
-                        req.ruleName(),
-                        req.ruleVersion(),
-                        "Compiled rule " + req.ruleName(),
-                        "RULE",
-                        cleanExpression(req.expression()),
-                        resolveInputSchema(req.inputSchema())
-                );
-                compiled = ruleEngine.compile(schema);
-                ruleCache.put(ruleKey, compiled);
-                return compiled;
+                if (compilerService != null) {
+                    compiled = compilerService.compile(req);
+                } else if (ruleEngine != null) {
+                    RuleSchema schema = new RuleSchema(
+                            req.ruleName(),
+                            req.ruleVersion(),
+                            "Compiled rule " + req.ruleName(),
+                            "RULE",
+                            cleanExpression(req.expression()),
+                            resolveInputSchema(req.inputSchema())
+                    );
+                    compiled = ruleEngine.compile(schema);
+                }
+                if (compiled != null) {
+                    ruleCache.put(ruleKey, compiled);
+                    return compiled;
+                }
             } catch (Exception e) {
                 log.error("Failed to compile rule from session json: {}", e.getMessage());
                 throw new IllegalStateException("Failed to compile rule for session " + sessionId + ": " + e.getMessage(), e);
             }
         }
         throw new IllegalStateException("CompiledRule not found in cache for session: " + sessionId);
+    }
+
+    public void setCompilerService(RuleCompilerService compilerService) {
+        this.compilerService = compilerService;
     }
 
     private String cleanExpression(String expr) {

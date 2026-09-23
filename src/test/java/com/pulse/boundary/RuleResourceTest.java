@@ -76,6 +76,32 @@ class RuleResourceTest {
     }
 
     @Test
+    @DisplayName("POST /rules/compile with unregistered ML model produces 400 Bad Request via GlobalExceptionMapper")
+    void testCompileRuleUnregisteredMlModel() throws Exception {
+        when(securityContext.getUserPrincipal()).thenReturn(principal);
+        when(principal.getName()).thenReturn("engineer_1");
+
+        com.helix.api.RuleCompilationException compilationEx = new com.helix.api.RuleCompilationException(
+                "Referenced ML model 'unregistered_model' does not exist or has no active version in the model registry"
+        );
+        when(control.compileAndSave(any(RuleRequest.class), eq("engineer_1"))).thenThrow(compilationEx);
+
+        RuleRequest req = new RuleRequest("ml_fraud", "1.0", "ML(unregistered_model) > 0.8", Map.of());
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> resource.compileRule(req))
+                .isInstanceOf(com.helix.api.RuleCompilationException.class)
+                .hasMessageContaining("unregistered_model");
+
+        GlobalExceptionMapper mapper = new GlobalExceptionMapper();
+        Response errorResponse = mapper.toResponse(compilationEx);
+        assertThat(errorResponse.getStatus()).isEqualTo(400);
+        assertThat(errorResponse.getMediaType().toString()).isEqualTo("application/problem+json");
+        com.pulse.boundary.dto.ProblemDetail problem = (com.pulse.boundary.dto.ProblemDetail) errorResponse.getEntity();
+        assertThat(problem.status()).isEqualTo(400);
+        assertThat(problem.detail()).contains("unregistered_model");
+    }
+
+    @Test
     @DisplayName("POST /rules/execute/{sessionId} where session does not exist returns 404")
     void testExecuteRuleNotFound() {
         when(repo.findById(999L)).thenReturn(Optional.empty());
