@@ -19,6 +19,7 @@
         <class>com.pulse.entity.AnalysisClassMetric</class>
         <class>com.pulse.entity.StreamExecutionRecord</class>
         <class>com.pulse.entity.StreamRecordMetric</class>
+        <class>com.pulse.entity.MlModel</class>
 
         <properties>
             <!-- Dialect -->
