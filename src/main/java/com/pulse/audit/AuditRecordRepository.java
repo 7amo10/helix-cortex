@@ -64,6 +64,50 @@ public class AuditRecordRepository {
     }
 
     /**
+     * Retrieves a paginated slice of audit records, optionally filtered by rule name.
+     *
+     * @param ruleName optional rule name filter (matches all if null or blank)
+     * @param offset   number of records to skip
+     * @param limit    maximum number of records to return
+     * @return paginated list of audit records ordered descending by recordSeq
+     */
+    public List<AuditRecord> findPaginated(String ruleName, int offset, int limit) {
+        if (ruleName != null && !ruleName.isBlank()) {
+            return em.createQuery(
+                    "SELECT r FROM AuditRecord r WHERE r.ruleName = :rn ORDER BY r.recordSeq DESC",
+                    AuditRecord.class)
+                    .setParameter("rn", ruleName.trim())
+                    .setFirstResult(offset)
+                    .setMaxResults(limit)
+                    .getResultList();
+        } else {
+            return em.createQuery(
+                    "SELECT r FROM AuditRecord r ORDER BY r.recordSeq DESC",
+                    AuditRecord.class)
+                    .setFirstResult(offset)
+                    .setMaxResults(limit)
+                    .getResultList();
+        }
+    }
+
+    /**
+     * Counts the total number of audit records matching an optional rule name filter.
+     *
+     * @param ruleName optional rule name filter
+     * @return count of matching records
+     */
+    public long countByRuleName(String ruleName) {
+        if (ruleName != null && !ruleName.isBlank()) {
+            return em.createQuery(
+                    "SELECT COUNT(r) FROM AuditRecord r WHERE r.ruleName = :rn", Long.class)
+                    .setParameter("rn", ruleName.trim())
+                    .getSingleResult();
+        } else {
+            return countAll();
+        }
+    }
+
+    /**
      * Counts the total number of audit records in the database.
      *
      * @return total count
