@@ -1,16 +1,20 @@
 package com.pulse.control;
 
 import com.helix.api.CompiledRule;
+import com.helix.api.sandbox.CapabilityViolationException;
+import com.helix.api.sandbox.TenantTrustLevel;
 import com.helix.core.cache.l4.L4RedisRuleCache;
 import com.pulse.boundary.dto.RuleRequest;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class RuleCompilerServiceTest {
 
@@ -158,5 +162,98 @@ class RuleCompilerServiceTest {
         org.assertj.core.api.Assertions.assertThatThrownBy(() -> compilerService.compile(request))
                 .isInstanceOf(com.helix.api.RuleCompilationException.class)
                 .hasMessageContaining("Referenced ML model 'legacy_model' does not exist or has no active version");
+    }
+
+    @Nested
+    @DisplayName("Sandbox & TenantTrustLevel AST Capability Enforcement Tests")
+    class SandboxCapabilityTests {
+
+        @Test
+        @DisplayName("Untrusted rule with forbidden method call throws CapabilityViolationException with diagnostic details")
+        void testUntrustedRuleWithForbiddenMethodThrowsException() {
+            RuleRequest request = new RuleRequest(
+                    "UntrustedMaliciousRule",
+                    "1.0.0",
+                    "System.exit(1)",
+                    Map.of()
+            );
+
+            assertThatThrownBy(() -> compilerService.compile(request, TenantTrustLevel.UNTRUSTED))
+                    .isInstanceOf(CapabilityViolationException.class)
+                    .satisfies(ex -> {
+                        CapabilityViolationException cve = (CapabilityViolationException) ex;
+                        assertThat(cve.getViolatingClass()).contains("java.lang.System");
+                        assertThat(cve.getViolatingMethod()).isEqualTo("exit");
+                    });
+        }
+
+        @Test
+        @DisplayName("Untrusted rule with forbidden ProcessBuilder throws CapabilityViolationException")
+        void testUntrustedRuleWithProcessBuilderThrowsException() {
+            RuleRequest request = new RuleRequest(
+                    "UntrustedExecRule",
+                    "1.0.0",
+                    "ProcessBuilder.start()",
+                    Map.of()
+            );
+
+            assertThatThrownBy(() -> compilerService.compile(request, TenantTrustLevel.UNTRUSTED))
+                    .isInstanceOf(CapabilityViolationException.class)
+                    .satisfies(ex -> {
+                        CapabilityViolationException cve = (CapabilityViolationException) ex;
+                        assertThat(cve.getViolatingClass()).contains("java.lang.ProcessBuilder");
+                    });
+        }
+
+        @Test
+        @DisplayName("Untrusted safe rule compiles cleanly into an executable CompiledRule")
+        void testUntrustedSafeRuleCompilesSuccessfully() throws Exception {
+            RuleRequest request = new RuleRequest(
+                    "UntrustedSafeRule",
+                    "1.0.0",
+                    "balance > 1000 && active == true",
+                    Map.of("balance", "double", "active", "boolean")
+            );
+
+            CompiledRule compiledRule = compilerService.compile(request, TenantTrustLevel.UNTRUSTED);
+
+            assertThat(compiledRule).isNotNull();
+            assertThat(compiledRule.getName()).isEqualTo("UntrustedSafeRule");
+            assertThat(compilerService.getLocalCache()).containsKey("UntrustedSafeRule:1.0.0:sandboxed");
+        }
+
+        @Test
+        @DisplayName("Trusted rule bypasses capability enforcement and compiles without invoking enforcer")
+        void testTrustedRuleBypassesCapabilityEnforcer() throws Exception {
+            RuleRequest request = new RuleRequest(
+                    "TrustedInternalRule",
+                    "1.0.0",
+                    "price * 0.90 < limit",
+                    Map.of("price", "double", "limit", "double")
+            );
+
+            CompiledRule compiled = compilerService.compile(request, TenantTrustLevel.TRUSTED);
+
+            assertThat(compiled).isNotNull();
+            assertThat(compiled.getName()).isEqualTo("TrustedInternalRule");
+            assertThat(compilerService.getLocalCache()).containsKey("TrustedInternalRule:1.0.0");
+        }
+
+        @Test
+        @DisplayName("Single-argument compile preserves full backward compatibility by defaulting to TRUSTED")
+        void testDefaultCompileIsTrusted() throws Exception {
+            RuleRequest request = new RuleRequest(
+                    "LegacyCompatRule",
+                    "1.0.0",
+                    "count > 5",
+                    Map.of("count", "int")
+            );
+
+            CompiledRule compiled = compilerService.compile(request);
+
+            assertThat(compiled).isNotNull();
+            assertThat(compiled.getName()).isEqualTo("LegacyCompatRule");
+            assertThat(compilerService.getLocalCache()).containsKey("LegacyCompatRule:1.0.0");
+        }
     }
 }
