@@ -2,6 +2,8 @@ package com.pulse.boundary;
 
 import com.helix.api.RuleCompilationException;
 import com.helix.api.RuleExecutionException;
+import com.helix.api.sandbox.CapabilityViolationException;
+import com.pulse.boundary.dto.CapabilityViolationResponse;
 import com.pulse.boundary.dto.ProblemDetail;
 import jakarta.persistence.EntityNotFoundException;
 import jakarta.persistence.OptimisticLockException;
@@ -37,6 +39,21 @@ public class GlobalExceptionMapper implements ExceptionMapper<Exception> {
 
         if (exception instanceof RuleCompilationException compilationEx) {
             return createProblemResponse(400, "Bad Request", compilationEx.getMessage());
+        }
+
+        if (exception instanceof CapabilityViolationException cve) {
+            CapabilityViolationResponse payload = new CapabilityViolationResponse(
+                    422,
+                    "Unprocessable Entity",
+                    cve.getViolatingClass(),
+                    cve.getViolatingMethod(),
+                    cve.getMessage(),
+                    cve.getMessage()
+            );
+            return Response.status(422)
+                    .type(PROBLEM_JSON)
+                    .entity(payload)
+                    .build();
         }
 
         if (exception instanceof RuleExecutionException executionEx) {

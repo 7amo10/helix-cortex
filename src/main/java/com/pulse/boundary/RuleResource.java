@@ -1,6 +1,8 @@
 package com.pulse.boundary;
 
 import com.helix.api.RuleCompilationException;
+import com.helix.api.sandbox.CapabilityViolationException;
+import com.helix.api.sandbox.TenantTrustLevel;
 import com.pulse.boundary.dto.ExecutionRequest;
 import com.pulse.boundary.dto.RuleRequest;
 import com.pulse.boundary.filter.Secured;
@@ -26,6 +28,7 @@ import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
 import jakarta.ws.rs.core.SecurityContext;
 import org.eclipse.microprofile.openapi.annotations.Operation;
+import org.eclipse.microprofile.openapi.annotations.parameters.Parameter;
 import org.eclipse.microprofile.openapi.annotations.responses.APIResponse;
 import org.eclipse.microprofile.openapi.annotations.responses.APIResponses;
 import org.eclipse.microprofile.openapi.annotations.tags.Tag;
@@ -82,9 +85,13 @@ public class RuleResource {
     @Operation(summary = "Compile dynamic rule to bytecode", description = "Compiles raw rule code into JVM bytecode and stores a new RuleSession")
     @APIResponses({
             @APIResponse(responseCode = "201", description = "Rule compiled successfully"),
-            @APIResponse(responseCode = "400", description = "Compilation error or malformed rule expression")
+            @APIResponse(responseCode = "400", description = "Compilation error or malformed rule expression"),
+            @APIResponse(responseCode = "422", description = "Capability policy violation for untrusted rule")
     })
-    public Response compileRule(RuleRequest req) throws RuleCompilationException {
+    public Response compileRule(
+            RuleRequest req,
+            @Parameter(description = "Whether to enforce sandbox capability restrictions for untrusted tenant code")
+            @QueryParam("sandboxed") @DefaultValue("false") boolean sandboxed) throws RuleCompilationException, CapabilityViolationException {
         if (req == null || req.ruleName() == null || req.expression() == null) {
             return Response.status(Response.Status.BAD_REQUEST)
                     .type(PROBLEM_JSON)
@@ -95,10 +102,15 @@ public class RuleResource {
         String username = securityContext != null && securityContext.getUserPrincipal() != null ?
                 securityContext.getUserPrincipal().getName() : "anonymous";
 
-        RuleSession session = control.compileAndSave(req, username);
+        TenantTrustLevel trustLevel = TenantTrustLevel.fromBoolean(sandboxed);
+        RuleSession session = control.compileAndSave(req, username, trustLevel);
         return Response.status(Response.Status.CREATED)
                 .entity(session)
                 .build();
+    }
+
+    public Response compileRule(RuleRequest req) throws RuleCompilationException, CapabilityViolationException {
+        return compileRule(req, false);
     }
 
     @POST
