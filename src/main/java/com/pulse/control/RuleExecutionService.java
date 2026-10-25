@@ -7,6 +7,8 @@ import com.helix.api.ExecutionResult;
 import com.helix.api.RuleEngine;
 import com.helix.core.executor.VirtualThreadRuleExecutor;
 import com.helix.core.parser.RuleSchema;
+import com.pulse.audit.AuditRecord;
+import com.pulse.audit.AuditTrailService;
 import com.pulse.boundary.dto.BatchExecutionRequest;
 import com.pulse.boundary.dto.BatchExecutionResponse;
 import com.pulse.boundary.dto.RuleRequest;
@@ -45,6 +47,9 @@ public class RuleExecutionService {
     private RuleSessionRepository sessionRepository;
 
     @Inject
+    private AuditTrailService auditTrailService;
+
+    @Inject
     @ConfigProperty(name = "helix.cortex.executor.type", defaultValue = "VIRTUAL_THREADS")
     private String configuredExecutorType = "VIRTUAL_THREADS";
 
@@ -57,6 +62,7 @@ public class RuleExecutionService {
     private ExecutorType executorType;
     private VirtualThreadRuleExecutor virtualThreadExecutor;
     private ExecutorService platformPool;
+    private ExecutorService auditExecutor;
     private final Map<String, CompiledRule> ruleCache = new ConcurrentHashMap<>();
 
     public RuleExecutionService() {
@@ -65,10 +71,18 @@ public class RuleExecutionService {
     public RuleExecutionService(RuleEngine ruleEngine,
                                 RuleSessionRepository sessionRepository,
                                 ExecutorType executorType) {
+        this(ruleEngine, sessionRepository, executorType, null);
+    }
+
+    public RuleExecutionService(RuleEngine ruleEngine,
+                                RuleSessionRepository sessionRepository,
+                                ExecutorType executorType,
+                                AuditTrailService auditTrailService) {
         this.ruleEngine = ruleEngine;
         this.sessionRepository = sessionRepository;
         this.executorType = executorType != null ? executorType : ExecutorType.defaultForCurrentJvm();
         this.configuredExecutorType = this.executorType.name();
+        this.auditTrailService = auditTrailService;
         init();
     }
 
@@ -78,6 +92,10 @@ public class RuleExecutionService {
             this.executorType = ExecutorType.fromString(configuredExecutorType);
         }
         log.info("Initializing RuleExecutionService with executor type: {}", executorType);
+
+        if (this.auditExecutor == null || this.auditExecutor.isShutdown()) {
+            this.auditExecutor = Executors.newVirtualThreadPerTaskExecutor();
+        }
 
         if (executorType == ExecutorType.VIRTUAL_THREADS) {
             this.virtualThreadExecutor = new VirtualThreadRuleExecutor(Duration.ofSeconds(30));
@@ -105,6 +123,9 @@ public class RuleExecutionService {
         if (platformPool != null) {
             platformPool.shutdown();
         }
+        if (auditExecutor != null) {
+            auditExecutor.shutdown();
+        }
     }
 
     /**
@@ -123,54 +144,77 @@ public class RuleExecutionService {
         Callable<OpcodeMetric> task = () -> {
             long startNanos = System.nanoTime();
             ExecutionResult result;
-            if (executorType == ExecutorType.VIRTUAL_THREADS && virtualThreadExecutor != null) {
-                result = virtualThreadExecutor.execute(compiledRule, context);
-            } else {
-                result = ruleEngine.execute(compiledRule, context);
-            }
-
-            long elapsedNanos = result.getExecutionTimeNanos() > 0 ?
-                    result.getExecutionTimeNanos() : (System.nanoTime() - startNanos);
-            boolean success = result.isSuccess();
-            if (!success && result.getError().isPresent()) {
-                log.error("Rule execution failed with exception: {}", result.getError().get().getMessage(), result.getError().get());
-            }
-            if (session != null) {
-                session.setStatus(success ? SessionStatus.EXECUTED : SessionStatus.FAILED);
-            }
-
-            long opcodeCount = Math.max(10L, (variables != null ? variables.size() : 0) * 8L + 12L);
-            boolean antipattern = elapsedNanos > 50_000_000L || opcodeCount > 500L;
-
-            OpcodeMetric metric = new OpcodeMetric(session, opcodeCount, elapsedNanos, antipattern);
-            if (session != null) {
-                session.addMetric(metric);
-                if (sessionRepository != null) {
-                    sessionRepository.save(session);
+            String outcome = "PASSED";
+            long elapsedNanos = 0L;
+            try {
+                if (executorType == ExecutorType.VIRTUAL_THREADS && virtualThreadExecutor != null) {
+                    result = virtualThreadExecutor.execute(compiledRule, context);
+                } else {
+                    result = ruleEngine.execute(compiledRule, context);
                 }
+
+                elapsedNanos = result.getExecutionTimeNanos() > 0 ?
+                        result.getExecutionTimeNanos() : (System.nanoTime() - startNanos);
+                boolean success = result.isSuccess();
+                if (!success) {
+                    outcome = "FAILED";
+                    if (result.getError().isPresent()) {
+                        log.error("Rule execution failed with exception: {}", result.getError().get().getMessage(), result.getError().get());
+                    }
+                }
+                if (session != null) {
+                    session.setStatus(success ? SessionStatus.EXECUTED : SessionStatus.FAILED);
+                }
+
+                long opcodeCount = Math.max(10L, (variables != null ? variables.size() : 0) * 8L + 12L);
+                boolean antipattern = elapsedNanos > 50_000_000L || opcodeCount > 500L;
+
+                OpcodeMetric metric = new OpcodeMetric(session, opcodeCount, elapsedNanos, antipattern);
+                if (session != null) {
+                    session.addMetric(metric);
+                    if (sessionRepository != null) {
+                        sessionRepository.save(session);
+                    }
+                }
+
+                if (flameGraphAggregator != null) {
+                    String rName = (compiledRule != null && compiledRule.getName() != null && !compiledRule.getName().isBlank())
+                            ? compiledRule.getName() : ("rule_" + sessionId);
+                    List<String> cpuFrames = List.of(
+                            "com.pulse.boundary.RuleResource.execute",
+                            "com.pulse.control.RuleExecutionService.execute",
+                            "com.helix.engine.RuleExecution." + rName
+                    );
+                    flameGraphAggregator.addSample(com.helix.profiler.flamegraph.MetricType.CPU_TIME, cpuFrames, Math.max(1L, elapsedNanos / 1_000L));
+
+                    long allocBytes = Math.max(128L, opcodeCount * 32L);
+                    List<String> allocFrames = List.of(
+                            "com.pulse.boundary.RuleResource.execute",
+                            "com.pulse.control.RuleExecutionService.execute",
+                            "com.helix.engine.RuleExecution." + rName,
+                            "java.lang.Object.<init>"
+                    );
+                    flameGraphAggregator.addSample(com.helix.profiler.flamegraph.MetricType.ALLOCATION_BYTES, allocFrames, allocBytes);
+                }
+
+                triggerAuditRecord(compiledRule, session, sessionId, securityContext, outcome, elapsedNanos, variables);
+
+                return metric;
+            } catch (Exception e) {
+                elapsedNanos = System.nanoTime() - startNanos;
+                outcome = "FAILED";
+                if (session != null) {
+                    session.setStatus(SessionStatus.FAILED);
+                    if (sessionRepository != null) {
+                        try {
+                            sessionRepository.save(session);
+                        } catch (Exception ignored) {
+                        }
+                    }
+                }
+                triggerAuditRecord(compiledRule, session, sessionId, securityContext, outcome, elapsedNanos, variables);
+                throw e;
             }
-
-            if (flameGraphAggregator != null) {
-                String rName = (compiledRule != null && compiledRule.getName() != null && !compiledRule.getName().isBlank())
-                        ? compiledRule.getName() : ("rule_" + sessionId);
-                List<String> cpuFrames = List.of(
-                        "com.pulse.boundary.RuleResource.execute",
-                        "com.pulse.control.RuleExecutionService.execute",
-                        "com.helix.engine.RuleExecution." + rName
-                );
-                flameGraphAggregator.addSample(com.helix.profiler.flamegraph.MetricType.CPU_TIME, cpuFrames, Math.max(1L, elapsedNanos / 1_000L));
-
-                long allocBytes = Math.max(128L, opcodeCount * 32L);
-                List<String> allocFrames = List.of(
-                        "com.pulse.boundary.RuleResource.execute",
-                        "com.pulse.control.RuleExecutionService.execute",
-                        "com.helix.engine.RuleExecution." + rName,
-                        "java.lang.Object.<init>"
-                );
-                flameGraphAggregator.addSample(com.helix.profiler.flamegraph.MetricType.ALLOCATION_BYTES, allocFrames, allocBytes);
-            }
-
-            return metric;
         };
 
         try {
@@ -238,9 +282,13 @@ public class RuleExecutionService {
                     boolean antipattern = elapsedNanos > 50_000_000L || opcodeCount > 500L;
                     OpcodeMetric metric = new OpcodeMetric(session, opcodeCount, elapsedNanos, antipattern);
                     metrics.add(metric);
+
+                    String outcome = res.isSuccess() ? "PASSED" : "FAILED";
+                    triggerAuditRecord(compiledRule, session, request.sessionId(), securityContext, outcome, elapsedNanos, vars);
                 }
             } catch (Exception e) {
                 log.error("Virtual-thread structured batch execution failed: {}", e.getMessage(), e);
+                triggerAuditRecord(compiledRule, session, request.sessionId(), securityContext, "FAILED", System.nanoTime() - batchStartNanos, Collections.emptyMap());
                 throw new IllegalStateException("Batch execution failed: " + e.getMessage(), e);
             } finally {
                 SecurityContextHolder.clearContext();
@@ -381,5 +429,162 @@ public class RuleExecutionService {
 
     public void setFlameGraphAggregator(com.helix.profiler.flamegraph.FlameGraphAggregator flameGraphAggregator) {
         this.flameGraphAggregator = flameGraphAggregator;
+    }
+
+    /**
+     * Evaluates a compiled rule for streaming event processing, capturing execution metrics
+     * and asynchronously recording an audit event.
+     *
+     * @param compiledRule  compiled rule instance
+     * @param context       streaming event execution context
+     * @param tenantId      tenant identifier
+     * @param isSandboxRun  whether rule is executed under sandbox restrictions
+     * @return ExecutionResult containing execution outcome and latency
+     */
+    public ExecutionResult executeStream(CompiledRule compiledRule, ExecutionContext context, String tenantId, boolean isSandboxRun) {
+        Objects.requireNonNull(compiledRule, "compiledRule cannot be null");
+        Objects.requireNonNull(context, "context cannot be null");
+
+        long startNanos = System.nanoTime();
+        ExecutionResult result;
+        String outcome = "PASSED";
+        long durationNanos = 0L;
+
+        try {
+            if (executorType == ExecutorType.VIRTUAL_THREADS && virtualThreadExecutor != null) {
+                result = virtualThreadExecutor.execute(compiledRule, context);
+            } else {
+                result = ruleEngine.execute(compiledRule, context);
+            }
+
+            durationNanos = result.getExecutionTimeNanos() > 0 ?
+                    result.getExecutionTimeNanos() : (System.nanoTime() - startNanos);
+
+            if (!result.isSuccess()) {
+                outcome = "FAILED";
+            }
+            recordAuditAsync(
+                    compiledRule.getName() != null ? compiledRule.getName() : "stream_rule",
+                    compiledRule.getVersion() != null ? compiledRule.getVersion() : "1.0.0",
+                    tenantId != null ? tenantId : "default-tenant",
+                    outcome,
+                    durationNanos,
+                    isSandboxRun
+            );
+            return result;
+        } catch (Exception e) {
+            durationNanos = System.nanoTime() - startNanos;
+            outcome = "FAILED";
+            recordAuditAsync(
+                    compiledRule.getName() != null ? compiledRule.getName() : "stream_rule",
+                    compiledRule.getVersion() != null ? compiledRule.getVersion() : "1.0.0",
+                    tenantId != null ? tenantId : "default-tenant",
+                    outcome,
+                    durationNanos,
+                    isSandboxRun
+            );
+            throw new RuntimeException("Stream rule execution failed: " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Dispatches audit record persistence asynchronously onto Java 21 virtual threads.
+     *
+     * @param ruleName        name of the executed rule
+     * @param ruleVersion     version of the executed rule
+     * @param tenantId        tenant identifier
+     * @param outcome         execution outcome string (e.g. PASSED, FAILED)
+     * @param durationNanos   execution duration in nanoseconds
+     * @param isSandboxRun    whether rule was evaluated in sandbox
+     * @return CompletableFuture completing with the saved AuditRecord or null
+     */
+    public CompletableFuture<AuditRecord> recordAuditAsync(String ruleName, String ruleVersion, String tenantId,
+                                                          String outcome, long durationNanos, boolean isSandboxRun) {
+        if (auditTrailService == null) {
+            return CompletableFuture.completedFuture(null);
+        }
+        return CompletableFuture.supplyAsync(() -> {
+            try {
+                return auditTrailService.recordExecution(
+                        ruleName,
+                        ruleVersion,
+                        tenantId,
+                        outcome,
+                        durationNanos,
+                        isSandboxRun
+                );
+            } catch (Exception e) {
+                log.error("Failed to asynchronously record audit event for rule '{}' (tenant: {}): {}",
+                        ruleName, tenantId, e.getMessage(), e);
+                return null;
+            }
+        }, auditExecutor);
+    }
+
+    private void triggerAuditRecord(CompiledRule compiledRule, RuleSession session, Long sessionId,
+                                    SecurityContext securityContext, String outcome, long durationNanos,
+                                    Map<String, Object> variables) {
+        if (auditTrailService == null) {
+            return;
+        }
+
+        String ruleName = (compiledRule != null && compiledRule.getName() != null && !compiledRule.getName().isBlank())
+                ? compiledRule.getName()
+                : (session != null && session.getCompiledRuleId() != null ? session.getCompiledRuleId() : "rule_" + sessionId);
+
+        String ruleVersion = (compiledRule != null && compiledRule.getVersion() != null && !compiledRule.getVersion().isBlank())
+                ? compiledRule.getVersion()
+                : "1.0.0";
+
+        String tenantId = resolveTenantId(session, securityContext);
+        boolean isSandboxRun = resolveSandboxFlag(variables, session);
+
+        recordAuditAsync(ruleName, ruleVersion, tenantId, outcome, durationNanos, isSandboxRun);
+    }
+
+    private String resolveTenantId(RuleSession session, SecurityContext securityContext) {
+        if (securityContext != null && securityContext.getUserPrincipal() != null) {
+            String principalName = securityContext.getUserPrincipal().getName();
+            if (principalName != null && !principalName.isBlank()) {
+                return principalName;
+            }
+        }
+        String currentPrincipal = SecurityContextHolder.getPrincipalName();
+        if (currentPrincipal != null && !currentPrincipal.isBlank() && !"anonymous".equalsIgnoreCase(currentPrincipal)) {
+            return currentPrincipal;
+        }
+        if (session != null && session.getEngineerId() != null && !session.getEngineerId().isBlank()) {
+            return session.getEngineerId();
+        }
+        return "default-tenant";
+    }
+
+    private boolean resolveSandboxFlag(Map<String, Object> variables, RuleSession session) {
+        if (variables != null && !variables.isEmpty()) {
+            Object sandbox = variables.get("__sandbox__");
+            if (sandbox == null) {
+                sandbox = variables.get("sandbox");
+            }
+            if (sandbox instanceof Boolean b) {
+                return b;
+            }
+            if (sandbox instanceof String s) {
+                return Boolean.parseBoolean(s);
+            }
+        }
+        if (session != null && session.getRuleJson() != null) {
+            if (session.getRuleJson().contains("\"sandboxed\":true") || session.getRuleJson().contains("\"sandboxed\": true")) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    public AuditTrailService getAuditTrailService() {
+        return auditTrailService;
+    }
+
+    public void setAuditTrailService(AuditTrailService auditTrailService) {
+        this.auditTrailService = auditTrailService;
     }
 }
