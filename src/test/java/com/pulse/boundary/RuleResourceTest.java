@@ -56,13 +56,78 @@ class RuleResourceTest {
         when(principal.getName()).thenReturn("engineer_1");
 
         RuleSession session = new RuleSession("engineer_1", "{}", "check:1.0", SessionStatus.COMPILED);
-        when(control.compileAndSave(any(RuleRequest.class), eq("engineer_1"))).thenReturn(session);
+        when(control.compileAndSave(any(RuleRequest.class), eq("engineer_1"), any(com.helix.api.sandbox.TenantTrustLevel.class))).thenReturn(session);
 
         RuleRequest req = new RuleRequest("check", "1.0", "x > 10", Map.of("x", "int"));
         Response response = resource.compileRule(req);
 
         assertThat(response.getStatus()).isEqualTo(201);
         assertThat(response.getEntity()).isEqualTo(session);
+    }
+
+    @Test
+    @DisplayName("POST /rules/compile with sandboxed=true passes UNTRUSTED trust level to control")
+    void testCompileRuleSandboxedTrue() throws Exception {
+        when(securityContext.getUserPrincipal()).thenReturn(principal);
+        when(principal.getName()).thenReturn("engineer_1");
+
+        RuleSession session = new RuleSession("engineer_1", "{}", "check:1.0:sandboxed", SessionStatus.COMPILED);
+        when(control.compileAndSave(any(RuleRequest.class), eq("engineer_1"), eq(com.helix.api.sandbox.TenantTrustLevel.UNTRUSTED)))
+                .thenReturn(session);
+
+        RuleRequest req = new RuleRequest("check", "1.0", "x > 10", Map.of("x", "int"));
+        Response response = resource.compileRule(req, true);
+
+        assertThat(response.getStatus()).isEqualTo(201);
+        assertThat(response.getEntity()).isEqualTo(session);
+        verify(control).compileAndSave(any(RuleRequest.class), eq("engineer_1"), eq(com.helix.api.sandbox.TenantTrustLevel.UNTRUSTED));
+    }
+
+    @Test
+    @DisplayName("POST /rules/compile with sandboxed=false passes TRUSTED trust level to control")
+    void testCompileRuleSandboxedFalse() throws Exception {
+        when(securityContext.getUserPrincipal()).thenReturn(principal);
+        when(principal.getName()).thenReturn("engineer_1");
+
+        RuleSession session = new RuleSession("engineer_1", "{}", "check:1.0", SessionStatus.COMPILED);
+        when(control.compileAndSave(any(RuleRequest.class), eq("engineer_1"), eq(com.helix.api.sandbox.TenantTrustLevel.TRUSTED)))
+                .thenReturn(session);
+
+        RuleRequest req = new RuleRequest("check", "1.0", "x > 10", Map.of("x", "int"));
+        Response response = resource.compileRule(req, false);
+
+        assertThat(response.getStatus()).isEqualTo(201);
+        assertThat(response.getEntity()).isEqualTo(session);
+        verify(control).compileAndSave(any(RuleRequest.class), eq("engineer_1"), eq(com.helix.api.sandbox.TenantTrustLevel.TRUSTED));
+    }
+
+    @Test
+    @DisplayName("POST /rules/compile with sandboxed=true throwing CapabilityViolationException maps to 422")
+    void testCompileRuleCapabilityViolation() throws Exception {
+        when(securityContext.getUserPrincipal()).thenReturn(principal);
+        when(principal.getName()).thenReturn("untrusted_tenant");
+
+        com.helix.api.sandbox.CapabilityViolationException violation =
+                new com.helix.api.sandbox.CapabilityViolationException("java.lang.System", "exit");
+        when(control.compileAndSave(any(RuleRequest.class), eq("untrusted_tenant"), eq(com.helix.api.sandbox.TenantTrustLevel.UNTRUSTED)))
+                .thenThrow(violation);
+
+        RuleRequest req = new RuleRequest("malicious_rule", "1.0", "java.lang.System.exit(0)", Map.of());
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> resource.compileRule(req, true))
+                .isInstanceOf(com.helix.api.sandbox.CapabilityViolationException.class);
+
+        GlobalExceptionMapper mapper = new GlobalExceptionMapper();
+        Response errorResponse = mapper.toResponse(violation);
+        assertThat(errorResponse.getStatus()).isEqualTo(422);
+        assertThat(errorResponse.getMediaType().toString()).isEqualTo("application/problem+json");
+
+        com.pulse.boundary.dto.CapabilityViolationResponse payload =
+                (com.pulse.boundary.dto.CapabilityViolationResponse) errorResponse.getEntity();
+        assertThat(payload.status()).isEqualTo(422);
+        assertThat(payload.violatingClass()).isEqualTo("java.lang.System");
+        assertThat(payload.violatingMethod()).isEqualTo("exit");
+        assertThat(payload.errorMessage()).contains("java.lang.System.exit");
     }
 
     @Test
@@ -84,7 +149,7 @@ class RuleResourceTest {
         com.helix.api.RuleCompilationException compilationEx = new com.helix.api.RuleCompilationException(
                 "Referenced ML model 'unregistered_model' does not exist or has no active version in the model registry"
         );
-        when(control.compileAndSave(any(RuleRequest.class), eq("engineer_1"))).thenThrow(compilationEx);
+        when(control.compileAndSave(any(RuleRequest.class), eq("engineer_1"), any(com.helix.api.sandbox.TenantTrustLevel.class))).thenThrow(compilationEx);
 
         RuleRequest req = new RuleRequest("ml_fraud", "1.0", "ML(unregistered_model) > 0.8", Map.of());
 

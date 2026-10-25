@@ -73,6 +73,25 @@ class RuleSessionControlTest {
     }
 
     @Test
+    @DisplayName("compileAndSave with UNTRUSTED trust level delegates to compilerService with UNTRUSTED and appends :sandboxed")
+    void testCompileAndSaveUntrusted() throws Exception {
+        RuleCompilerService mockCompiler = mock(RuleCompilerService.class);
+        RuleSessionControl customControl = new RuleSessionControl(ruleEngine, sessionRepository, null, mockCompiler);
+
+        when(compiledRule.getName()).thenReturn("check-rule");
+        when(compiledRule.getVersion()).thenReturn("1.0");
+        when(mockCompiler.compile(any(Rule.class), eq(com.helix.api.sandbox.TenantTrustLevel.UNTRUSTED))).thenReturn(compiledRule);
+        when(sessionRepository.save(any(RuleSession.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        RuleRequest req = new RuleRequest("check-rule", "1.0", "return x > 10", Map.of("x", "int"));
+        RuleSession session = customControl.compileAndSave(req, "engineer_1", com.helix.api.sandbox.TenantTrustLevel.UNTRUSTED);
+
+        assertThat(session).isNotNull();
+        assertThat(session.getCompiledRuleId()).isEqualTo("check-rule:1.0:sandboxed");
+        verify(mockCompiler).compile(any(Rule.class), eq(com.helix.api.sandbox.TenantTrustLevel.UNTRUSTED));
+    }
+
+    @Test
     @DisplayName("executeAndSave with valid variables returns OpcodeMetric with executionTimeNanos > 0 and status EXECUTED")
     void testExecuteAndSaveSuccess() throws Exception {
         RuleSession session = new RuleSession("engineer_1", "{\"ruleName\":\"check\",\"ruleVersion\":\"1.0\",\"expression\":\"x > 10\"}", "check:1.0", SessionStatus.COMPILED);

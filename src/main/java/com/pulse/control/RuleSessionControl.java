@@ -5,6 +5,8 @@ import com.helix.api.CompiledRule;
 import com.helix.api.ExecutionContext;
 import com.helix.api.ExecutionResult;
 import com.helix.api.RuleEngine;
+import com.helix.api.sandbox.CapabilityViolationException;
+import com.helix.api.sandbox.TenantTrustLevel;
 import com.helix.core.parser.RuleSchema;
 import com.pulse.boundary.dto.RuleRequest;
 import com.pulse.entity.OpcodeMetric;
@@ -85,16 +87,35 @@ public class RuleSessionControl {
     }
 
     /**
-     * Compiles the requested rule definition, caches the compiled rule instance,
-     * and persists an initial RuleSession in COMPILED status.
+     * Compiles the requested rule definition with default TRUSTED trust level,
+     * caches the compiled rule instance, and persists an initial RuleSession in COMPILED status.
      *
      * @param req        rule compilation specification
      * @param engineerId username of engineer submitting rule
      * @return persisted RuleSession
+     * @throws com.helix.api.RuleCompilationException if compilation fails
      */
     public RuleSession compileAndSave(RuleRequest req, String engineerId) throws com.helix.api.RuleCompilationException {
+        return compileAndSave(req, engineerId, TenantTrustLevel.TRUSTED);
+    }
+
+    /**
+     * Compiles the requested rule definition enforcing capability sandbox restrictions if trustLevel is UNTRUSTED,
+     * caches the compiled rule instance, and persists an initial RuleSession in COMPILED status.
+     *
+     * @param req        rule compilation specification
+     * @param engineerId username of engineer submitting rule
+     * @param trustLevel tenant trust level governing capability policy enforcement
+     * @return persisted RuleSession
+     * @throws com.helix.api.RuleCompilationException if compilation fails
+     * @throws CapabilityViolationException          if untrusted rule violates capability policies
+     */
+    public RuleSession compileAndSave(RuleRequest req, String engineerId, TenantTrustLevel trustLevel)
+            throws com.helix.api.RuleCompilationException, CapabilityViolationException {
         Objects.requireNonNull(req, "RuleRequest cannot be null");
         Objects.requireNonNull(engineerId, "engineerId cannot be null");
+
+        TenantTrustLevel effectiveTrustLevel = (trustLevel != null) ? trustLevel : TenantTrustLevel.TRUSTED;
 
         String expression = cleanExpression(req.expression());
         Map<String, Class<?>> schema = resolveInputSchema(req.inputSchema());
@@ -110,11 +131,12 @@ public class RuleSessionControl {
 
         CompiledRule compiledRule;
         if (compilerService != null) {
-            compiledRule = compilerService.compile(rule);
+            compiledRule = compilerService.compile(rule, effectiveTrustLevel);
         } else {
             compiledRule = ruleEngine.compile(rule);
         }
-        String compiledId = compiledRule.getName() + ":" + compiledRule.getVersion();
+        String trustSuffix = effectiveTrustLevel.isSandboxed() ? ":sandboxed" : "";
+        String compiledId = compiledRule.getName() + ":" + compiledRule.getVersion() + trustSuffix;
         compiledRuleCache.put(compiledId, compiledRule);
         if (executionService != null) {
             executionService.cacheCompiledRule(compiledId, compiledRule);
@@ -155,7 +177,13 @@ public class RuleSessionControl {
                         cleanExpression(req.expression()),
                         resolveInputSchema(req.inputSchema())
                 );
-                compiledRule = ruleEngine.compile(rule);
+                TenantTrustLevel trustLevel = (session.getCompiledRuleId() != null && session.getCompiledRuleId().endsWith(":sandboxed"))
+                        ? TenantTrustLevel.UNTRUSTED : TenantTrustLevel.TRUSTED;
+                if (compilerService != null) {
+                    compiledRule = compilerService.compile(rule, trustLevel);
+                } else {
+                    compiledRule = ruleEngine.compile(rule);
+                }
                 compiledRuleCache.put(session.getCompiledRuleId(), compiledRule);
             } catch (Exception e) {
                 log.error("Failed to recompile cached rule for session {}: {}", sessionId, e.getMessage());

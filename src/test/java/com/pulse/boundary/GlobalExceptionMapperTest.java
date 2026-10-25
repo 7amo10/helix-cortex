@@ -116,4 +116,22 @@ class GlobalExceptionMapperTest {
         assertThat(problem.status()).isEqualTo(500);
         assertThat(problem.title()).isEqualTo("Internal Server Error");
     }
+
+    @Test
+    @DisplayName("CapabilityViolationException maps to 422 Unprocessable Entity with structured payload")
+    void testCapabilityViolationException() {
+        com.helix.api.sandbox.CapabilityViolationException ex =
+                new com.helix.api.sandbox.CapabilityViolationException("java.lang.System", "exit");
+        Response response = mapper.toResponse(ex);
+
+        assertThat(response.getStatus()).isEqualTo(422);
+        assertThat(response.getMediaType().toString()).isEqualTo("application/problem+json");
+
+        com.pulse.boundary.dto.CapabilityViolationResponse payload =
+                (com.pulse.boundary.dto.CapabilityViolationResponse) response.getEntity();
+        assertThat(payload.status()).isEqualTo(422);
+        assertThat(payload.violatingClass()).isEqualTo("java.lang.System");
+        assertThat(payload.violatingMethod()).isEqualTo("exit");
+        assertThat(payload.errorMessage()).contains("java.lang.System.exit");
+    }
 }
