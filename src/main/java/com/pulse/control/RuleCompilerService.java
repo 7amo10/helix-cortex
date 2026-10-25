@@ -4,6 +4,9 @@ import com.helix.api.CompiledRule;
 import com.helix.api.Rule;
 import com.helix.api.RuleCompilationException;
 import com.helix.api.ml.OnnxModelDescriptor;
+import com.helix.api.sandbox.CapabilityPolicy;
+import com.helix.api.sandbox.CapabilityViolationException;
+import com.helix.api.sandbox.TenantTrustLevel;
 import com.helix.core.RuleCompiler;
 import com.helix.core.cache.l4.L4RedisRuleCache;
 import com.helix.core.cache.l4.RuleKeyHasher;
@@ -21,6 +24,8 @@ import com.helix.core.parser.ast.MethodCallNode;
 import com.helix.core.parser.ast.OnnxInferenceNode;
 import com.helix.core.parser.ast.UnaryOpNode;
 import com.helix.core.parser.ast.VariableNode;
+import com.helix.core.sandbox.CapabilityPolicyEnforcer;
+import com.helix.core.sandbox.DefaultCapabilityPolicy;
 import com.pulse.boundary.dto.RuleRequest;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
@@ -61,6 +66,8 @@ public class RuleCompilerService {
     private final LocalModelRegistry localModelRegistry;
     private final Map<String, CompiledRule> localCompiledCache = new ConcurrentHashMap<>();
     private volatile OnnxSessionPool onnxSessionPool;
+    private CapabilityPolicy capabilityPolicy = new DefaultCapabilityPolicy();
+    private CapabilityPolicyEnforcer capabilityPolicyEnforcer = new CapabilityPolicyEnforcer(capabilityPolicy);
 
     public RuleCompilerService() {
         this(null, null, null);
@@ -112,31 +119,54 @@ public class RuleCompilerService {
     }
 
     /**
-     * Compiles a Rule specification into JVM bytecode, consulting L4 distributed cache first.
+     * Compiles a Rule specification into JVM bytecode, defaulting trust level to TRUSTED.
+     * Preserves backward compatibility.
      *
      * @param rule rule specification
      * @return compiled, executable rule
      * @throws RuleCompilationException if compilation fails
      */
     public CompiledRule compile(Rule rule) throws RuleCompilationException {
-        Objects.requireNonNull(rule, "Rule cannot be null");
-        String version = rule.getVersion() != null ? rule.getVersion() : "1.0.0";
-        String ruleKey = rule.getName() + ":" + version;
+        return compile(rule, TenantTrustLevel.TRUSTED);
+    }
 
-        // 1. Inspect AST for ML() model references, validate against ModelRegistryService,
+    /**
+     * Compiles a Rule specification into JVM bytecode with capability sandbox enforcement
+     * based on the tenant's trust level.
+     *
+     * @param rule       rule specification
+     * @param trustLevel trust level governing capability sandbox enforcement
+     * @return compiled, executable rule
+     * @throws RuleCompilationException      if compilation fails
+     * @throws CapabilityViolationException if an untrusted rule violates capability policies
+     */
+    public CompiledRule compile(Rule rule, TenantTrustLevel trustLevel) throws RuleCompilationException, CapabilityViolationException {
+        Objects.requireNonNull(rule, "Rule cannot be null");
+        TenantTrustLevel effectiveTrustLevel = (trustLevel != null) ? trustLevel : TenantTrustLevel.TRUSTED;
+
+        // 1. Enforce capability policy on untrusted rules prior to bytecode generation
+        if (effectiveTrustLevel == TenantTrustLevel.UNTRUSTED) {
+            enforceCapabilityPolicy(rule);
+        }
+
+        String version = rule.getVersion() != null ? rule.getVersion() : "1.0.0";
+        String trustSuffix = effectiveTrustLevel.isSandboxed() ? ":sandboxed" : "";
+        String ruleKey = rule.getName() + ":" + version + trustSuffix;
+
+        // 2. Inspect AST for ML() model references, validate against ModelRegistryService,
         // and inject resolved model paths and feature metadata into LocalModelRegistry / schema context
         Rule effectiveRule = resolveMlModelsAndEnrichSchema(rule);
 
-        // 2. Check local in-memory compiled cache
+        // 3. Check local in-memory compiled cache
         CompiledRule localRule = localCompiledCache.get(ruleKey);
         if (localRule != null) {
             log.debug("Local compiled cache hit for rule '{}'", ruleKey);
             return localRule;
         }
 
-        // 3. Check L4 distributed Redis cache
+        // 4. Check L4 distributed Redis cache
         String schemaHash = effectiveRule.getInputSchema() != null ? String.valueOf(effectiveRule.getInputSchema().hashCode()) : "empty";
-        String ruleHash = RuleKeyHasher.hashRule(effectiveRule.getName() + ":" + version + ":" + schemaHash);
+        String ruleHash = RuleKeyHasher.hashRule(effectiveRule.getName() + ":" + version + ":" + schemaHash + trustSuffix);
 
         if (l4Cache != null) {
             var bytecodeOpt = l4Cache.getBytecode(ruleHash);
@@ -147,11 +177,11 @@ public class RuleCompilerService {
             }
         }
 
-        // 4. Compile rule
+        // 5. Compile rule
         CompiledRule compiled = ruleCompiler.compile(effectiveRule);
         localCompiledCache.put(ruleKey, compiled);
 
-        // 5. Populate L4 distributed cache with compiled bytecode payload
+        // 6. Populate L4 distributed cache with compiled bytecode payload
         if (l4Cache != null) {
             byte[] bytecodePayload = effectiveRule.getExpression() != null ?
                     effectiveRule.getExpression().getBytes(StandardCharsets.UTF_8) : new byte[0];
@@ -162,13 +192,27 @@ public class RuleCompilerService {
     }
 
     /**
-     * Compiles a RuleRequest DTO into JVM bytecode.
+     * Compiles a RuleRequest DTO into JVM bytecode, defaulting trust level to TRUSTED.
      *
      * @param req rule request specification
      * @return compiled rule
      * @throws RuleCompilationException if compilation fails
      */
     public CompiledRule compile(RuleRequest req) throws RuleCompilationException {
+        return compile(req, TenantTrustLevel.TRUSTED);
+    }
+
+    /**
+     * Compiles a RuleRequest DTO into JVM bytecode with capability sandbox enforcement
+     * based on the tenant's trust level.
+     *
+     * @param req        rule request specification
+     * @param trustLevel trust level governing capability sandbox enforcement
+     * @return compiled rule
+     * @throws RuleCompilationException      if compilation fails
+     * @throws CapabilityViolationException if an untrusted rule violates capability policies
+     */
+    public CompiledRule compile(RuleRequest req, TenantTrustLevel trustLevel) throws RuleCompilationException, CapabilityViolationException {
         Objects.requireNonNull(req, "RuleRequest cannot be null");
         Map<String, Class<?>> resolvedSchema = new HashMap<>();
         if (req.inputSchema() != null) {
@@ -186,7 +230,7 @@ public class RuleCompilerService {
                 resolvedSchema
         );
 
-        return compile(schema);
+        return compile(schema, trustLevel);
     }
 
     /**
@@ -364,6 +408,66 @@ public class RuleCompilerService {
 
     public void setModelRegistryService(ModelRegistryService modelRegistryService) {
         this.modelRegistryService = modelRegistryService;
+    }
+
+    /**
+     * Validates that the rule's AST expression satisfies all capability policies
+     * before bytecode compilation.
+     *
+     * @param rule incoming rule specification
+     * @throws CapabilityViolationException if a forbidden package, class, or method is referenced
+     * @throws RuleCompilationException      if expression parsing fails
+     */
+    public void enforceCapabilityPolicy(Rule rule) throws CapabilityViolationException, RuleCompilationException {
+        String expression = rule.getExpression();
+        if (expression == null || expression.isBlank()) {
+            return;
+        }
+
+        try {
+            ExpressionNode astRoot = astBuilder.buildAst(cleanExpression(expression));
+            CapabilityPolicyEnforcer enforcer = getOrCreateCapabilityPolicyEnforcer();
+            enforcer.enforce(astRoot);
+        } catch (CapabilityViolationException cve) {
+            log.warn("Capability policy violation detected in untrusted rule '{}': {}", rule.getName(), cve.getMessage());
+            throw cve;
+        } catch (Exception e) {
+            log.error("Failed to parse rule expression during capability enforcement for '{}': {}", rule.getName(), e.getMessage());
+            throw new RuleCompilationException("Capability validation failed: " + e.getMessage(), e);
+        }
+    }
+
+    private String cleanExpression(String expr) {
+        if (expr == null) return "";
+        String trimmed = expr.trim();
+        if (trimmed.startsWith("return ")) {
+            return trimmed.substring(7).trim();
+        }
+        return trimmed;
+    }
+
+    public CapabilityPolicy getCapabilityPolicy() {
+        if (capabilityPolicy == null) {
+            capabilityPolicy = new DefaultCapabilityPolicy();
+        }
+        return capabilityPolicy;
+    }
+
+    public void setCapabilityPolicy(CapabilityPolicy capabilityPolicy) {
+        this.capabilityPolicy = capabilityPolicy;
+        this.capabilityPolicyEnforcer = new CapabilityPolicyEnforcer(
+                capabilityPolicy != null ? capabilityPolicy : new DefaultCapabilityPolicy());
+    }
+
+    public CapabilityPolicyEnforcer getOrCreateCapabilityPolicyEnforcer() {
+        if (capabilityPolicyEnforcer == null) {
+            capabilityPolicyEnforcer = new CapabilityPolicyEnforcer(getCapabilityPolicy());
+        }
+        return capabilityPolicyEnforcer;
+    }
+
+    public void setCapabilityPolicyEnforcer(CapabilityPolicyEnforcer capabilityPolicyEnforcer) {
+        this.capabilityPolicyEnforcer = capabilityPolicyEnforcer;
     }
 
     private Class<?> resolveType(String typeStr) {
